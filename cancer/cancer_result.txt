@@ -2,6 +2,7 @@ Test Accuracy: 0.9386
 Precision: 0.8723
 Recall: 0.9762
 F1-score: 0.9213
+Iterations needed: 34
 Confusion Matrix (for test set):
   True Negatives (benign predicted correctly): 66
   False Positives (benign predicted as malignant): 6

@@ -118,8 +118,8 @@ class ACOR:
             # Early stopping (convergence)
             if it - best_iter > self.patience:
                 print(f"Early stopping at iteration {it+1}")
-                break
-        return best_sol, best_fit
+                return best_sol, best_fit, it + 1
+        return best_sol, best_fit, self.max_iter
 
 # 4. Objective function for ACOR (binary cross-entropy loss)
 # --------------------------------------------------
@@ -143,7 +143,7 @@ ub = 3
 
 # 6. Run ACOR to optimize FNN weights
 # --------------------------------------------------
-best_weights, best_loss = acor.optimize(lb, ub)
+best_weights, best_loss, n_iterations = acor.optimize(lb, ub)
 
 # 7. Evaluate on test set and save results
 # --------------------------------------------------
@@ -218,6 +218,7 @@ with open(os.path.join(output_dir, 'heart_result.txt'), 'w') as f:
     f.write(f"Precision: {prec:.4f}\n")
     f.write(f"Recall: {rec:.4f}\n")
     f.write(f"F1-score: {f1:.4f}\n")
+    f.write(f"Number of Iterations until Convergence: {n_iterations}\n")
     f.write("Confusion Matrix (for test set):\n")
     f.write(f"  True Negatives (no heart disease predicted correctly): {cm[0,0]}\n")
     f.write(f"  False Positives (no heart disease predicted as heart disease): {cm[0,1]}\n")
