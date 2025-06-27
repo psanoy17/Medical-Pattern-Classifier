@@ -1,0 +1,11 @@
+Test Accuracy: 0.9386
+Precision: 0.8723
+Recall: 0.9762
+F1-score: 0.9213
+Confusion Matrix (for test set):
+  True Negatives (benign predicted correctly): 66
+  False Positives (benign predicted as malignant): 6
+  False Negatives (malignant predicted as benign): 1
+  True Positives (malignant predicted correctly): 41
+Predicted class distribution: 67 predicted benign, 47 predicted malignant
+True class distribution: 72 actually benign, 42 actually malignant

@@ -1,16 +1,19 @@
 import numpy as np
 import pandas as pd
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import warnings
+import matplotlib.pyplot as plt
+import pickle
 
 # Set random seed for reproducibility
 np.random.seed(42)
 
 # 1. Load and preprocess the data
 # --------------------------------------------------
-data = pd.read_csv('cancer.csv')
+data = pd.read_csv(os.path.join(os.path.dirname(__file__), 'cancer.csv'))
 
 # Drop columns that are all NaN (e.g., due to trailing comma in CSV)
 data = data.dropna(axis=1, how='all')
@@ -39,48 +42,41 @@ print('Unique values in y_train:', np.unique(y_train, return_counts=True))
 print('Unique values in y_test:', np.unique(y_test, return_counts=True))
 print('First 5 rows of X_train:', X_train[:5])
 
-# 2. Define a simple FNN (now with two hidden layers)
+# 2. Define a simple FNN (single hidden layer, 6 neurons)
 # --------------------------------------------------
 class FNN:
-    def __init__(self, input_dim, hidden_dim1, hidden_dim2, output_dim):
+    """
+    Feedforward Neural Network (FNN) with a single hidden layer (6 neurons) and 1 output neuron.
+    Architecture: Input -> Hidden(6) -> Output(1)
+    """
+    def __init__(self, input_dim, hidden_dim, output_dim):
         self.input_dim = input_dim
-        self.hidden_dim1 = hidden_dim1
-        self.hidden_dim2 = hidden_dim2
+        self.hidden_dim = hidden_dim
         self.output_dim = output_dim
 
     def set_weights(self, weights):
         idx = 0
-        self.W1 = weights[idx:idx+self.input_dim*self.hidden_dim1].reshape(self.input_dim, self.hidden_dim1)
-        idx += self.input_dim*self.hidden_dim1
-        self.b1 = weights[idx:idx+self.hidden_dim1]
-        idx += self.hidden_dim1
-        self.W2 = weights[idx:idx+self.hidden_dim1*self.hidden_dim2].reshape(self.hidden_dim1, self.hidden_dim2)
-        idx += self.hidden_dim1*self.hidden_dim2
-        self.b2 = weights[idx:idx+self.hidden_dim2]
-        idx += self.hidden_dim2
-        self.W3 = weights[idx:idx+self.hidden_dim2*self.output_dim].reshape(self.hidden_dim2, self.output_dim)
-        idx += self.hidden_dim2*self.output_dim
-        self.b3 = weights[idx:idx+self.output_dim]
+        self.W1 = weights[idx:idx+self.input_dim*self.hidden_dim].reshape(self.input_dim, self.hidden_dim)
+        idx += self.input_dim*self.hidden_dim
+        self.b1 = weights[idx:idx+self.hidden_dim]
+        idx += self.hidden_dim
+        self.W2 = weights[idx:idx+self.hidden_dim*self.output_dim].reshape(self.hidden_dim, self.output_dim)
+        idx += self.hidden_dim*self.output_dim
+        self.b2 = weights[idx:idx+self.output_dim]
 
     def forward(self, X):
         z1 = X @ self.W1 + self.b1
-        a1 = np.maximum(0, z1)  # ReLU
+        a1 = np.tanh(z1)
         z2 = a1 @ self.W2 + self.b2
-        a2 = np.maximum(0, z2)  # ReLU
-        z3 = a2 @ self.W3 + self.b3
-        a3 = 1 / (1 + np.exp(-z3))  # Sigmoid for binary classification
-        return a3.squeeze()
+        a2 = 1 / (1 + np.exp(-z2))  # Sigmoid for binary classification
+        return a2.squeeze()
 
     def predict(self, X):
         return (self.forward(X) > 0.5).astype(int)
 
     @staticmethod
-    def get_num_weights(input_dim, hidden_dim1, hidden_dim2, output_dim):
-        return (
-            input_dim*hidden_dim1 + hidden_dim1 +
-            hidden_dim1*hidden_dim2 + hidden_dim2 +
-            hidden_dim2*output_dim + output_dim
-        )
+    def get_num_weights(input_dim, hidden_dim, output_dim):
+        return input_dim*hidden_dim + hidden_dim + hidden_dim*output_dim + output_dim
 
 # 3. Improved ACOR implementation
 # --------------------------------------------------
@@ -96,6 +92,8 @@ class ACOR:
         self.patience = patience
 
     def optimize(self, lb, ub):
+        # --- Step 1: Initialization ---
+        # Generate P (= n_samples) random solutions
         solutions = np.random.uniform(lb, ub, (self.n_samples, self.dim))
         fitness = np.array([self.obj_func(sol) for sol in solutions])
         idx = np.argsort(fitness)
@@ -105,28 +103,34 @@ class ACOR:
         best_fit = fitness[0]
         best_iter = 0
         for it in range(self.max_iter):
+            # --- Step 2: Solution Construction ---
+            # Construct G Gaussian mixture pdfs (weights and stds)
             w = 1/(self.q*self.n_samples*np.sqrt(2*np.pi)) * np.exp(-0.5*(np.arange(self.n_samples)/(self.q*self.n_samples))**2)
             w /= w.sum()
             s = np.zeros((self.n_samples, self.dim))
             for i in range(self.n_samples):
                 s[i] = self.xi * np.std(solutions, axis=0) + 1e-10
+            # Generate Q (= n_ants) new trial solutions by sampling the GMM
             new_solutions = np.zeros((self.n_ants, self.dim))
             for k in range(self.n_ants):
                 idx = np.random.choice(self.n_samples, p=w)
                 new_solutions[k] = np.random.normal(solutions[idx], s[idx])
                 new_solutions[k] = np.clip(new_solutions[k], lb, ub)
             new_fitness = np.array([self.obj_func(sol) for sol in new_solutions])
+            # --- Step 3: Pheromone Update ---
+            # Add new solutions to population and discard worst Q
             all_solutions = np.vstack([solutions, new_solutions])
             all_fitness = np.hstack([fitness, new_fitness])
             idx = np.argsort(all_fitness)
             solutions = all_solutions[idx][:self.n_samples]
             fitness = all_fitness[idx][:self.n_samples]
+            # --- Step 4: Convergence Check ---
             if fitness[0] < best_fit:
                 best_fit = fitness[0]
                 best_sol = solutions[0].copy()
                 best_iter = it
             print(f"Iteration {it+1}/{self.max_iter}, Best Loss: {best_fit:.4f}")
-            # Early stopping
+            # Early stopping (convergence)
             if it - best_iter > self.patience:
                 print(f"Early stopping at iteration {it+1}")
                 break
@@ -144,17 +148,16 @@ def objective(weights):
 # 5. Model and ACOR parameters
 # --------------------------------------------------
 input_dim = X_train.shape[1]
-hidden_dim1 = 16  # first hidden layer size
-hidden_dim2 = 8   # second hidden layer size
+hidden_dim = 6  # single hidden layer size
 output_dim = 1
-model = FNN(input_dim, hidden_dim1, hidden_dim2, output_dim)
-num_weights = FNN.get_num_weights(input_dim, hidden_dim1, hidden_dim2, output_dim)
-acor = ACOR(obj_func=objective, dim=num_weights, n_ants=60, n_samples=120, q=0.1, xi=0.85, max_iter=100, patience=20)
+model = FNN(input_dim, hidden_dim, output_dim)
+num_weights = FNN.get_num_weights(input_dim, hidden_dim, output_dim)
+acor = ACOR(obj_func=objective, dim=num_weights, n_ants=30, n_samples=120, q=0.1, xi=0.85, max_iter=100, patience=15)
 lb = -3
 ub = 3
 
 # Debug: Model output before optimization
-model = FNN(input_dim, hidden_dim1, hidden_dim2, output_dim)
+model = FNN(input_dim, hidden_dim, output_dim)
 random_weights = np.random.uniform(-3, 3, num_weights)
 model.set_weights(random_weights)
 pre_opt_output = model.forward(X_train)
@@ -209,7 +212,8 @@ print(f"Predicted class distribution: {y_pred.tolist().count(0)} predicted benig
 print(f"True class distribution: {y_test.tolist().count(0)} actually benign, {y_test.tolist().count(1)} actually malignant")
 
 # Save results to a txt file
-with open('cancer_result.txt', 'w') as f:
+output_dir = os.path.dirname(__file__)
+with open(os.path.join(output_dir, 'cancer_result.txt'), 'w') as f:
     f.write(f"Test Accuracy: {acc:.4f}\n")
     f.write(f"Precision: {prec:.4f}\n")
     f.write(f"Recall: {rec:.4f}\n")
@@ -222,4 +226,58 @@ with open('cancer_result.txt', 'w') as f:
     f.write(f"Predicted class distribution: {y_pred.tolist().count(0)} predicted benign, {y_pred.tolist().count(1)} predicted malignant\n")
     f.write(f"True class distribution: {y_test.tolist().count(0)} actually benign, {y_test.tolist().count(1)} actually malignant\n")
     if len(unique_pred) == 1:
-        f.write(f"WARNING: Model predicted only one class: {unique_pred[0]}. Metrics may be misleading.\n") 
+        f.write(f"WARNING: Model predicted only one class: {unique_pred[0]}. Metrics may be misleading.\n")
+
+# Plot and save confusion matrix
+def plot_confusion_matrix(cm, class_names, save_path=None):
+    fig, ax = plt.subplots()
+    im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+    ax.figure.colorbar(im, ax=ax)
+    ax.set(
+        xticks=np.arange(cm.shape[1]),
+        yticks=np.arange(cm.shape[0]),
+        xticklabels=class_names, yticklabels=class_names,
+        ylabel='True label', xlabel='Predicted label',
+        title='Confusion Matrix'
+    )
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, format(cm[i, j], 'd'),
+                    ha="center", va="center",
+                    color="white" if cm[i, j] > thresh else "black")
+    fig.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
+    plt.show()
+
+plot_confusion_matrix(cm, class_names=["Benign", "Malignant"], save_path=os.path.join(output_dir, "cancer_confusion_matrix.png"))
+
+# Plot and save metrics bar chart
+metrics = [acc, prec, rec, f1]
+metric_names = ['Accuracy', 'Precision', 'Recall', 'F1-score']
+plt.figure(figsize=(6, 4))
+bars = plt.bar(metric_names, metrics, color=['skyblue', 'orange', 'green', 'red'])
+plt.ylim(0, 1)
+plt.title('Cancer Model Performance Metrics')
+plt.ylabel('Score')
+for bar, value in zip(bars, metrics):
+    plt.text(bar.get_x() + bar.get_width() / 2, value + 0.02, f'{value:.2f}', ha='center', va='bottom')
+plt.tight_layout()
+plt.savefig(os.path.join(output_dir, 'cancer_metrics_bar_chart.png'))
+plt.show()
+
+# Save the trained model (weights and scaler)
+model_data = {
+    'weights': best_weights,
+    'scaler': scaler,
+    'input_dim': input_dim,
+    'hidden_dim': hidden_dim,
+    'output_dim': output_dim
+}
+
+with open(os.path.join(output_dir, 'cancer_model.pkl'), 'wb') as f:
+    pickle.dump(model_data, f)
+
+print("Model saved to cancer_model.pkl") 

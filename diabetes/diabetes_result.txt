@@ -1,0 +1,11 @@
+Test Accuracy: 0.7143
+Precision: 0.6000
+Recall: 0.5556
+F1-score: 0.5769
+Confusion Matrix (for test set):
+  True Negatives (no diabetes predicted correctly): 80
+  False Positives (no diabetes predicted as diabetes): 20
+  False Negatives (diabetes predicted as no diabetes): 24
+  True Positives (diabetes predicted correctly): 30
+Predicted class distribution: 104 predicted no diabetes, 50 predicted diabetes
+True class distribution: 100 actually no diabetes, 54 actually diabetes

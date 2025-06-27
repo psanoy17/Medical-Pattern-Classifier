@@ -1,0 +1,11 @@
+Test Accuracy: 0.8293
+Precision: 0.8182
+Recall: 0.8571
+F1-score: 0.8372
+Confusion Matrix (for test set):
+  True Negatives (no heart disease predicted correctly): 80
+  False Positives (no heart disease predicted as heart disease): 20
+  False Negatives (heart disease predicted as no heart disease): 15
+  True Positives (heart disease predicted correctly): 90
+Predicted class distribution: 95 predicted no heart disease, 110 predicted heart disease
+True class distribution: 100 actually no heart disease, 105 actually heart disease
