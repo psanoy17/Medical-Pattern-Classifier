@@ -274,11 +274,24 @@ class SOCHA_ACOR:
 # 4. Objective function for ACOR (binary cross-entropy loss)
 # --------------------------------------------------
 def objective(weights):
-    model.set_weights(weights)
-    y_pred = model.forward(X_train)
-    eps = 1e-8
-    loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
-    return loss
+    # Handle both single weight vector and batch of weight vectors
+    if weights.ndim == 1:
+        # Single weight vector
+        model.set_weights(weights)
+        y_pred = model.forward(X_train)
+        eps = 1e-8
+        loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
+        return loss
+    else:
+        # Batch of weight vectors
+        losses = []
+        for w in weights:
+            model.set_weights(w)
+            y_pred = model.forward(X_train)
+            eps = 1e-8
+            loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
+            losses.append(loss)
+        return np.array(losses)
 
 # 5. Model and ACOR parameters
 # --------------------------------------------------
