@@ -5,14 +5,15 @@ This implementation follows the thesis specifications:
 - Multiple Colony ACOR with Levenberg-Marquardt local search
 - FNN Architecture: 9 inputs, 6 hidden (ReLU), 1 output (Sigmoid)
 - Binary Cross-Entropy Loss
-- 4-fold cross-validation
+- Single train-test split (80-20)
 - 50 independent runs
+- Uses preprocessed cancer1.dat with 9 features
 """
 
 import numpy as np
 import pandas as pd
 import os
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import warnings
@@ -23,27 +24,33 @@ from lm_local_search import MultipleColonyACOR, LevenbergMarquardt
 # Set random seed for reproducibility
 np.random.seed(42)
 
-# 1. Load and preprocess the data
+# 1. Load and preprocess the data from cancer1.dat
 # --------------------------------------------------
-data = pd.read_csv(os.path.join(os.path.dirname(__file__), 'cancer.csv'))
+# Load the preprocessed data (space-separated, 9 features + 2 one-hot encoded target)
+data = pd.read_csv(
+    os.path.join(os.path.dirname(__file__), 'cancer1.dat'),
+    sep=' ',
+    header=None
+)
 
-# Drop columns that are all NaN (e.g., due to trailing comma in CSV)
-data = data.dropna(axis=1, how='all')
+# The last TWO columns (10 and 11) are the one-hot encoded target [class_0, class_1]
+X = data.iloc[:, :-2].values  # First 9 columns are features
+y_onehot = data.iloc[:, -2:].values   # Last 2 columns are one-hot encoded target
 
-# Drop 'id' column if present
-if 'id' in data.columns:
-    data = data.drop('id', axis=1)
+# Convert one-hot encoding back to single label (0 or 1)
+y = np.argmax(y_onehot, axis=1)
 
-# Map 'diagnosis' to 0 (benign) and 1 (malignant)
-data['diagnosis'] = data['diagnosis'].map({'B': 0, 'M': 1})
-
-# Target variable is 'diagnosis'
-X = data.drop('diagnosis', axis=1).values
-y = data['diagnosis'].values
+print(f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features")
+print(f"Target distribution: Class 0: {np.sum(y==0)}, Class 1: {np.sum(y==1)}")
 
 # Standardize features
 scaler = StandardScaler()
 X = scaler.fit_transform(X)
+
+# Split into train and test sets (80-20)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+print(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
 
 # 2. Define FNN matching thesis specifications (9, 6, 1)
 # --------------------------------------------------
@@ -80,15 +87,21 @@ class FNN_Thesis:
         # Output bias
         self.b2 = weights[idx:idx + self.output_dim]
 
+    def _stable_sigmoid(self, z):
+        """Numerically stable sigmoid function that prevents overflow"""
+        # Clip values to prevent overflow
+        z = np.clip(z, -500, 500)
+        return 1 / (1 + np.exp(-z))
+
     def forward(self, X):
         """Forward pass with ReLU and Sigmoid activations"""
         # Hidden layer with ReLU activation
         z1 = X @ self.W1 + self.b1
         a1 = np.maximum(0, z1)  # ReLU activation
         
-        # Output layer with Sigmoid activation
+        # Output layer with Sigmoid activation (numerically stable)
         z2 = a1 @ self.W2 + self.b2
-        a2 = 1 / (1 + np.exp(-z2))  # Sigmoid activation
+        a2 = self._stable_sigmoid(z2)
         
         return a2.squeeze()
 
@@ -111,24 +124,22 @@ def objective_function(weights, model, X_train, y_train):
     loss = -np.mean(y_train * np.log(y_pred + eps) + (1 - y_train) * np.log(1 - y_pred + eps))
     return loss
 
-# 4. Cross-validation and multiple runs evaluation
+# 4. Multiple runs evaluation
 # --------------------------------------------------
-def evaluate_acor_lm(X, y, n_folds=4, n_runs=50):
+def evaluate_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
     """
-    Evaluate ACOR-LM with multiple colonies using 4-fold CV and 50 runs
+    Evaluate ACOR-LM with multiple colonies using 50 independent runs
     
     Args:
-        X: Input features
-        y: Target labels
-        n_folds: Number of cross-validation folds
+        X_train: Training features
+        X_test: Test features
+        y_train: Training labels
+        y_test: Test labels
         n_runs: Number of independent runs
         
     Returns:
         Dictionary with evaluation results
     """
-    # Use only first 9 features to match thesis architecture
-    X_9 = X[:, :9]
-    
     # Initialize results storage
     results = {
         'accuracy': [],
@@ -140,80 +151,62 @@ def evaluate_acor_lm(X, y, n_folds=4, n_runs=50):
         'iterations': []
     }
     
-    # 4-fold cross-validation
-    kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+    print(f"\nRunning {n_runs} independent experiments...")
+    print("=" * 60)
     
-    for fold, (train_idx, test_idx) in enumerate(kf.split(X_9)):
-        print(f"\n=== FOLD {fold + 1}/{n_folds} ===")
+    for run in range(n_runs):
+        print(f"Run {run + 1}/{n_runs}", end=" ")
         
-        X_train_fold, X_test_fold = X_9[train_idx], X_9[test_idx]
-        y_train_fold, y_test_fold = y[train_idx], y[test_idx]
+        # Initialize model
+        model = FNN_Thesis(input_dim=9, hidden_dim=6, output_dim=1)
+        num_weights = FNN_Thesis.get_num_weights(9, 6, 1)
         
-        # 50 independent runs per fold
-        fold_results = {
-            'accuracy': [],
-            'precision': [],
-            'recall': [],
-            'f1_score': [],
-            'best_losses': [],
-            'iterations': []
-        }
+        # Create objective function
+        def obj_func(weights):
+            return objective_function(weights, model, X_train, y_train)
         
-        for run in range(n_runs):
-            print(f"  Run {run + 1}/{n_runs}", end=" ")
-            
-            # Initialize model
-            model = FNN_Thesis(input_dim=9, hidden_dim=6, output_dim=1)
-            num_weights = FNN_Thesis.get_num_weights(9, 6, 1)
-            
-            # Create objective function for this fold
-            def obj_func(weights):
-                return objective_function(weights, model, X_train_fold, y_train_fold)
-            
-            # Initialize Multiple Colony ACOR-LM
-            acor_lm = MultipleColonyACOR(
-                obj_func=obj_func,
-                dim=num_weights,
-                n_colonies=3,
-                n_ants=30,
-                n_samples=120,
-                q=0.1,
-                xi=0.85,
-                max_iter=100,
-                patience=15,
-                sharing_frequency=10,
-                sharing_ratio=0.1,
-                seed=42 + run  # Different seed for each run
-            )
-            
-            # Optimize
-            best_weights, best_loss, iterations = acor_lm.optimize(
-                lb=-3.0, ub=3.0, model=model, X_train=X_train_fold, y_train=y_train_fold
-            )
-            
-            # Evaluate on test set
-            model.set_weights(best_weights)
-            y_pred = model.predict(X_test_fold)
-            
-            # Calculate metrics
-            acc = accuracy_score(y_test_fold, y_pred)
-            prec = precision_score(y_test_fold, y_pred, zero_division=0)
-            rec = recall_score(y_test_fold, y_pred, zero_division=0)
-            f1 = f1_score(y_test_fold, y_pred, zero_division=0)
-            
-            # Store results
-            fold_results['accuracy'].append(acc)
-            fold_results['precision'].append(prec)
-            fold_results['recall'].append(rec)
-            fold_results['f1_score'].append(f1)
-            fold_results['best_losses'].append(best_loss)
-            fold_results['iterations'].append(iterations)
-            
-            print(f"Acc: {acc:.3f}, Loss: {best_loss:.3f}")
+        # Initialize Multiple Colony ACOR-LM
+        acor_lm = MultipleColonyACOR(
+            obj_func=obj_func,
+            dim=num_weights,
+            n_colonies=3,
+            n_ants=30,
+            n_samples=120,
+            q=0.1,
+            xi=0.85,
+            max_iter=100,
+            patience=15,
+            sharing_frequency=10,
+            sharing_ratio=0.1,
+            seed=42 + run  # Different seed for each run
+        )
         
-        # Average results for this fold
-        for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'best_losses', 'iterations']:
-            results[metric].append(np.mean(fold_results[metric]))
+        # Optimize
+        best_weights, best_loss, iterations = acor_lm.optimize(
+            lb=-3.0, ub=3.0, model=model, X_train=X_train, y_train=y_train
+        )
+        
+        # Evaluate on test set
+        model.set_weights(best_weights)
+        y_pred = model.predict(X_test)
+        
+        # Calculate metrics
+        acc = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred, zero_division=0)
+        rec = recall_score(y_test, y_pred, zero_division=0)
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        cm = confusion_matrix(y_test, y_pred)
+        
+        # Store results
+        results['accuracy'].append(acc)
+        results['precision'].append(prec)
+        results['recall'].append(rec)
+        results['f1_score'].append(f1)
+        results['confusion_matrices'].append(cm)
+        results['best_losses'].append(best_loss)
+        results['iterations'].append(iterations)
+        
+        print(f"Acc: {acc:.3f}, Prec: {prec:.3f}, Rec: {rec:.3f}, F1: {f1:.3f}, Loss: {best_loss:.3f}")
     
     return results
 
@@ -224,15 +217,16 @@ if __name__ == "__main__":
     print("=" * 60)
     print(f"Architecture: 9 inputs, 6 hidden (ReLU), 1 output (Sigmoid)")
     print(f"Total weights: {FNN_Thesis.get_num_weights(9, 6, 1)}")
-    print(f"Evaluation: 4-fold CV × 50 runs = 200 total experiments")
+    print(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
+    print(f"Evaluation: 50 independent runs")
     print()
     
     # Run evaluation
-    results = evaluate_acor_lm(X, y, n_folds=4, n_runs=50)
+    results = evaluate_acor_lm(X_train, X_test, y_train, y_test, n_runs=50)
     
     # Calculate final statistics
     print("\n" + "=" * 60)
-    print("FINAL RESULTS (Averaged across 4 folds and 50 runs)")
+    print("FINAL RESULTS (Averaged across 50 runs)")
     print("=" * 60)
     
     for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
@@ -243,13 +237,19 @@ if __name__ == "__main__":
     print(f"Best Loss: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}")
     print(f"Iterations: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}")
     
+    # Calculate average confusion matrix
+    avg_cm = np.mean(results['confusion_matrices'], axis=0)
+    print(f"\nAverage Confusion Matrix:")
+    print(avg_cm)
+    
     # Save results
     output_dir = os.path.dirname(__file__)
     results_data = {
         'results': results,
         'architecture': {'input': 9, 'hidden': 6, 'output': 1, 'weights': 67},
-        'evaluation': {'folds': 4, 'runs': 50, 'total_experiments': 200},
-        'algorithm': 'ACOR-LM with Multiple Colonies'
+        'evaluation': {'train_samples': len(X_train), 'test_samples': len(X_test), 'runs': 50},
+        'algorithm': 'ACOR-LM with Multiple Colonies',
+        'dataset': 'cancer1.dat (9 features)'
     }
     
     with open(os.path.join(output_dir, 'cancer_acor_lm_results.pkl'), 'wb') as f:
@@ -266,7 +266,7 @@ if __name__ == "__main__":
     bars = plt.bar(metrics, means, yerr=stds, capsize=5, 
                    color=['skyblue', 'orange', 'green', 'red'], alpha=0.7)
     plt.ylim(0, 1)
-    plt.title('ACOR-LM with Multiple Colonies - Cancer Classification Performance')
+    plt.title('ACOR-LM with Multiple Colonies - Cancer (9 features)')
     plt.ylabel('Score')
     plt.grid(True, alpha=0.3)
     
@@ -280,5 +280,3 @@ if __name__ == "__main__":
     plt.show()
     
     print("\nPerformance plot saved to: cancer_acor_lm_performance.png")
-
-

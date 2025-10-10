@@ -11,30 +11,46 @@ import pickle
 # Set random seed for reproducibility
 np.random.seed(42)
 
-# 1. Load and preprocess the data
+# 1. Load and preprocess the data from heart1.dat
 # --------------------------------------------------
-data = pd.read_csv(os.path.join(os.path.dirname(__file__), 'heart.csv'))
+# Load the preprocessed data (space-separated, 35 features + 2 one-hot encoded target)
+data = pd.read_csv(
+    os.path.join(os.path.dirname(__file__), 'heart1.dat'),
+    sep=' ',
+    header=None
+)
 
-# Target variable is 'target' (already 0/1)
-X = data.drop('target', axis=1).values
-y = data['target'].values
+# The last TWO columns (36 and 37) are the one-hot encoded target [class_0, class_1]
+X = data.iloc[:, :-2].values  # First 35 columns are features
+y_onehot = data.iloc[:, -2:].values   # Last 2 columns are one-hot encoded target
+
+# Convert one-hot encoding back to single label (0 or 1)
+y = np.argmax(y_onehot, axis=1)
+
+print(f"Loaded dataset: {X.shape[0]} samples, {X.shape[1]} features")
+print(f"Target distribution: Class 0: {np.sum(y==0)}, Class 1: {np.sum(y==1)}")
 
 # Standardize features
 scaler = StandardScaler()
 X = scaler.fit_transform(X)
 
-# Stratified train-test split
+# Stratified train-test split (80-20)
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y)
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
 
-# 2. Define a simple FNN (single hidden layer, 6 neurons)
+print(f"Training set: {len(X_train)} samples")
+print(f"Test set: {len(X_test)} samples")
+
+# 2. Define a simple FNN (35, 6, 1)
 # --------------------------------------------------
 class FNN:
     """
-    Feedforward Neural Network (FNN) with a single hidden layer (6 neurons) and 1 output neuron.
-    Architecture: Input -> Hidden(6) -> Output(1)
+    Feedforward Neural Network matching thesis specifications.
+    Architecture: Input(35) -> Hidden(6, ReLU) -> Output(1, Sigmoid)
+    Total weights: 35*6 + 6 + 6*1 + 1 = 223 weights
     """
-    def __init__(self, input_dim, hidden_dim, output_dim):
+    def __init__(self, input_dim=35, hidden_dim=6, output_dim=1):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
@@ -49,21 +65,26 @@ class FNN:
         idx += self.hidden_dim*self.output_dim
         self.b2 = weights[idx:idx+self.output_dim]
 
+    def _stable_sigmoid(self, z):
+        # Clip values to prevent overflow
+        z = np.clip(z, -500, 500)
+        return 1 / (1 + np.exp(-z))
+
     def forward(self, X):
         z1 = X @ self.W1 + self.b1
-        a1 = np.tanh(z1)
+        a1 = np.maximum(0, z1)  # ReLU activation for hidden layer
         z2 = a1 @ self.W2 + self.b2
-        a2 = 1 / (1 + np.exp(-z2))  # Sigmoid for binary classification
+        a2 = self._stable_sigmoid(z2)  # Sigmoid for binary classification
         return a2.squeeze()
 
     def predict(self, X):
         return (self.forward(X) > 0.5).astype(int)
 
     @staticmethod
-    def get_num_weights(input_dim, hidden_dim, output_dim):
+    def get_num_weights(input_dim=35, hidden_dim=6, output_dim=1):
         return input_dim*hidden_dim + hidden_dim + hidden_dim*output_dim + output_dim
 
-# 3. SOCHA-ACOR implementation (from R) with Medical Pattern Classifier hyperparameters
+# 3. SOCHA-ACOR implementation
 # --------------------------------------------------
 class SOCHA_ACOR:
     def __init__(self, obj_func, dim, n_ants=30, n_samples=80, q=0.1, xi=0.85, max_iter=100, patience=15, seed=42):
@@ -77,28 +98,26 @@ class SOCHA_ACOR:
         self.patience = patience
         self.seed = seed
         
-        # Initialize random number generator
         if seed > 0:
             np.random.seed(seed)
 
     def optimize(self, lb, ub):
         """SOCHA-ACOR optimization matching R implementation"""
-        e_abs = 1e-6  # Small error threshold
+        e_abs = 1e-6
         e_rel = 1e-6
-        max_value = 0  # opt value
+        max_value = 0
         eval_count = 0
         last_impr = self.max_iter
         nl = np.empty((self.n_samples, self.n_samples - 1), dtype=int)
         iteration = 0
 
-        # Initialize variables
         max_X = np.full(self.dim, np.nan)
-        max_y = np.inf  # Start with high value for minimization
+        max_y = np.inf
 
         p_X = None
         p_v = []
 
-        # Initialize archive with random solutions
+        # Initialize archive
         for i in range(self.n_samples):
             X = np.random.uniform(lb, ub, self.dim)
             y = self.obj_func(X)
@@ -116,7 +135,6 @@ class SOCHA_ACOR:
         for i in range(self.n_samples):
             nl[i] = np.delete(np.arange(self.n_samples), i)
 
-        # Initialize best from archive
         imax0 = int(np.argmin(p_v))
         max_y = float(p_v[imax0])
         max_X = p_X[imax0]
@@ -124,7 +142,6 @@ class SOCHA_ACOR:
 
         # Main optimization loop
         for iteration in range(self.max_iter):
-            # Generate new points based on chosen distributions
             dist_mean = p_X
             if np.sum(np.std(dist_mean, axis=0)) == 0:
                 return max_X, max_y, iteration + 1
@@ -135,26 +152,21 @@ class SOCHA_ACOR:
             if o_X is None or len(o_X) == 0:
                 return max_X, max_y, iteration + 1
 
-            # Evaluate new solutions
             y = self.obj_func(o_X)
             eval_count += len(o_X)
 
-            # Add new solutions to population
             p_X = np.vstack([p_X, o_X])
             p_v = np.concatenate([p_v, y])
             p_gr = self._rank_asc_with_random_ties(p_v)
 
-            # Keep best n_samples solutions
             idx_final = p_gr <= self.n_samples
             p_v = p_v[idx_final]
             p_gr = p_gr[idx_final]
             p_X = p_X[idx_final]
 
-            # Recompute neighbor lists
             for i in range(self.n_samples):
                 nl[i] = np.delete(np.arange(self.n_samples), i)
 
-            # Check for improvement (for minimization, we want lower values)
             if np.min(y) < max_y:
                 max_y = float(np.min(y))
                 imax = int(np.argmin(y))
@@ -167,7 +179,6 @@ class SOCHA_ACOR:
 
             print(f"Iteration {iteration+1}/{self.max_iter}, Best Loss: {max_y:.4f}")
             
-            # Early stopping (convergence)
             if iteration - best_iter > self.patience:
                 print(f"Early stopping at iteration {iteration+1}")
                 return max_X, max_y, iteration + 1
@@ -175,46 +186,38 @@ class SOCHA_ACOR:
         return max_X, max_y, self.max_iter
 
     def _rank_desc_with_random_ties(self, values):
-        """Rank values in descending order with random ties"""
         n = len(values)
-        # Shuffle to break ties randomly
         perm = np.random.permutation(n)
         shuffled_vals = values[perm]
         order = np.argsort(-shuffled_vals, kind='mergesort')
         ranks = np.empty(n, dtype=int)
         ranks[order] = np.arange(1, n + 1)
-        # Un-permute back
         inv_perm = np.empty(n, dtype=int)
         inv_perm[perm] = np.arange(n)
         return ranks[inv_perm]
 
     def _rank_asc_with_random_ties(self, values):
-        """Rank values in ascending order with random ties (for minimization)"""
         n = len(values)
-        # Shuffle to break ties randomly
         perm = np.random.permutation(n)
         shuffled_vals = values[perm]
         order = np.argsort(shuffled_vals, kind='mergesort')
         ranks = np.empty(n, dtype=int)
         ranks[order] = np.arange(1, n + 1)
-        # Un-permute back
         inv_perm = np.empty(n, dtype=int)
         inv_perm[perm] = np.arange(n)
         return ranks[inv_perm]
 
     def _gen_X(self, dist_mean, dist_rank, nl, n_of_points, q, k, xi):
-        """Generate new solutions based on Gaussian mixture distributions (SOCHA-ACOR)"""
         num_dists, num_dims = dist_mean.shape
         X = np.empty((n_of_points, num_dims), dtype=float)
 
-        # Choose distributions according to N(mean=1, sd=q*k)
         probs = self._normal_pdf(np.arange(1, num_dists + 1), mean=1.0, sd=q * k)
         probs = probs / probs.sum()
         idx = np.random.choice(num_dists, size=n_of_points, replace=True, p=probs)
 
         for l in range(n_of_points):
             j = idx[l]
-            o_dist_mean = dist_mean - dist_mean[j]  # translate origin
+            o_dist_mean = dist_mean - dist_mean[j]
             r_dist_mean = o_dist_mean.copy()
             available = nl[j]
             vec = None
@@ -223,7 +226,6 @@ class SOCHA_ACOR:
             for m in range(num_dims - 1):
                 if available.size == 0:
                     return None
-                # Distances in rotated space
                 sub = r_dist_mean[available, m:]
                 if sub.shape[0] == 0 or sub.shape[1] == 0:
                     return None
@@ -237,10 +239,8 @@ class SOCHA_ACOR:
                     choice = available[choose_idx]
                 else:
                     choice = available[0]
-                # Augment direction matrix
                 new_vec = o_dist_mean[choice]
                 vec = new_vec[None, :] if vec is None else np.vstack([vec, new_vec])
-                # QR to get rotation matrix
                 Q, _ = np.linalg.qr(vec.T, mode='complete')
                 R = Q
                 if np.linalg.det(R) < 0:
@@ -248,7 +248,6 @@ class SOCHA_ACOR:
                 r_dist_mean = o_dist_mean @ R
                 available = available[available != choice]
 
-            # Standard deviations along rotated axes
             dist_sd = np.array([
                 np.sum(np.abs(r_dist_mean[nl[j], i] - r_dist_mean[j, i])) / (k - 1)
                 for i in range(num_dims)
@@ -259,7 +258,6 @@ class SOCHA_ACOR:
         return X
 
     def _normal_pdf(self, x, mean, sd):
-        """Normal probability density function"""
         if sd <= 0:
             out = np.zeros_like(x, dtype=float)
             out[np.isclose(x, mean)] = 1.0
@@ -268,22 +266,18 @@ class SOCHA_ACOR:
         return np.exp(-0.5 * z * z) / (sd * np.sqrt(2.0 * np.pi))
 
     def _euc_dist(self, d):
-        """Euclidean distance"""
         return float(np.sqrt(np.sum(np.square(d))))
 
-# 4. Objective function for ACOR (binary cross-entropy loss)
+# 4. Objective function (binary cross-entropy loss)
 # --------------------------------------------------
 def objective(weights):
-    # Handle both single weight vector and batch of weight vectors
     if weights.ndim == 1:
-        # Single weight vector
         model.set_weights(weights)
         y_pred = model.forward(X_train)
         eps = 1e-8
         loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
         return loss
     else:
-        # Batch of weight vectors
         losses = []
         for w in weights:
             model.set_weights(w)
@@ -295,17 +289,21 @@ def objective(weights):
 
 # 5. Model and ACOR parameters
 # --------------------------------------------------
-input_dim = X_train.shape[1]
-hidden_dim = 6  # single hidden layer size
+input_dim = 35  # 35 features from heart1.dat
+hidden_dim = 6
 output_dim = 1
 model = FNN(input_dim, hidden_dim, output_dim)
 num_weights = FNN.get_num_weights(input_dim, hidden_dim, output_dim)
+print(f"\nModel architecture: {input_dim}-{hidden_dim}-{output_dim}")
+print(f"Total weights: {num_weights}")
+
 acor = SOCHA_ACOR(obj_func=objective, dim=num_weights, n_ants=30, n_samples=80, q=0.1, xi=0.85, max_iter=100, patience=15)
 lb = -3
 ub = 3
 
 # 6. Run ACOR to optimize FNN weights
 # --------------------------------------------------
+print("\nStarting ACOR optimization...")
 best_weights, best_loss, n_iterations = acor.optimize(lb, ub)
 
 # 7. Evaluate on test set and save results
@@ -322,12 +320,10 @@ cm = confusion_matrix(y_test, y_pred)
 unique_pred, counts_pred = np.unique(y_pred, return_counts=True)
 unique_true, counts_true = np.unique(y_test, return_counts=True)
 
-# Warn if only one class is predicted
 if len(unique_pred) == 1:
     warnings.warn(f"Model predicted only one class: {unique_pred[0]}. Metrics may be misleading.")
 
-# Print metrics
-print(f"Test Accuracy: {acc:.4f}")
+print(f"\nTest Accuracy: {acc:.4f}")
 print(f"Precision: {prec:.4f}")
 print(f"Recall: {rec:.4f}")
 print(f"F1-score: {f1:.4f}")
@@ -340,7 +336,7 @@ metric_names = ['Accuracy', 'Precision', 'Recall', 'F1-score']
 plt.figure(figsize=(6, 4))
 bars = plt.bar(metric_names, metrics, color=['skyblue', 'orange', 'green', 'red'])
 plt.ylim(0, 1)
-plt.title('Heart Model Performance Metrics')
+plt.title('Heart Model Performance Metrics (35 features)')
 plt.ylabel('Score')
 for bar, value in zip(bars, metrics):
     plt.text(bar.get_x() + bar.get_width() / 2, value + 0.02, f'{value:.2f}', ha='center', va='bottom')
@@ -348,7 +344,7 @@ plt.tight_layout()
 plt.savefig(os.path.join(os.path.dirname(__file__), 'heart_metrics_bar_chart.png'))
 plt.show()
 
-# Plot and save confusion matrix
+# Plot confusion matrix
 def plot_confusion_matrix(cm, class_names, save_path=None):
     fig, ax = plt.subplots()
     im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
@@ -372,36 +368,42 @@ def plot_confusion_matrix(cm, class_names, save_path=None):
         plt.savefig(save_path)
     plt.show()
 
-plot_confusion_matrix(cm, class_names=["No Heart Disease", "Heart Disease"], save_path=os.path.join(os.path.dirname(__file__), "heart_confusion_matrix.png"))
+plot_confusion_matrix(cm, class_names=["No Heart Disease", "Heart Disease"], 
+                     save_path=os.path.join(os.path.dirname(__file__), "heart_confusion_matrix.png"))
 
-# Save results to a txt file
+# Save results
 output_dir = os.path.dirname(__file__)
 with open(os.path.join(output_dir, 'heart_result.txt'), 'w') as f:
+    f.write(f"Heart Disease Classification - 35 Features\n")
+    f.write(f"Architecture: {input_dim}-{hidden_dim}-{output_dim}\n")
+    f.write(f"Total weights: {num_weights}\n\n")
     f.write(f"Test Accuracy: {acc:.4f}\n")
     f.write(f"Precision: {prec:.4f}\n")
     f.write(f"Recall: {rec:.4f}\n")
     f.write(f"F1-score: {f1:.4f}\n")
     f.write(f"Number of Iterations until Convergence: {n_iterations}\n")
     f.write("Confusion Matrix (for test set):\n")
-    f.write(f"  True Negatives (no heart disease predicted correctly): {cm[0,0]}\n")
-    f.write(f"  False Positives (no heart disease predicted as heart disease): {cm[0,1]}\n")
-    f.write(f"  False Negatives (heart disease predicted as no heart disease): {cm[1,0]}\n")
-    f.write(f"  True Positives (heart disease predicted correctly): {cm[1,1]}\n")
-    f.write(f"Predicted class distribution: {y_pred.tolist().count(0)} predicted no heart disease, {y_pred.tolist().count(1)} predicted heart disease\n")
-    f.write(f"True class distribution: {y_test.tolist().count(0)} actually no heart disease, {y_test.tolist().count(1)} actually heart disease\n")
+    f.write(f"  True Negatives: {cm[0,0]}\n")
+    f.write(f"  False Positives: {cm[0,1]}\n")
+    f.write(f"  False Negatives: {cm[1,0]}\n")
+    f.write(f"  True Positives: {cm[1,1]}\n")
+    f.write(f"Predicted distribution: {dict(zip(*np.unique(y_pred, return_counts=True)))}\n")
+    f.write(f"True distribution: {dict(zip(*np.unique(y_test, return_counts=True)))}\n")
     if len(unique_pred) == 1:
-        f.write(f"WARNING: Model predicted only one class: {unique_pred[0]}. Metrics may be misleading.\n")
+        f.write(f"WARNING: Model predicted only one class: {unique_pred[0]}\n")
 
-# Save the trained model (weights and scaler)
+# Save model
 model_data = {
     'weights': best_weights,
     'scaler': scaler,
     'input_dim': input_dim,
     'hidden_dim': hidden_dim,
-    'output_dim': output_dim
+    'output_dim': output_dim,
+    'num_features': 35
 }
 
 with open(os.path.join(output_dir, 'heart_model.pkl'), 'wb') as f:
     pickle.dump(model_data, f)
 
-print("Model saved to heart_model.pkl") 
+print("\nModel saved to heart_model.pkl")
+print(f"Results saved to heart_result.txt")

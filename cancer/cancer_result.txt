@@ -1,12 +1,16 @@
-Test Accuracy: 0.8509
-Precision: 0.8788
-Recall: 0.6905
-F1-score: 0.7733
-Number of Iterations until Convergence: 1
+Cancer Classification - 9 Features
+Architecture: 9-6-1
+Total weights: 67
+
+Test Accuracy: 0.9714
+Precision: 0.9231
+Recall: 1.0000
+F1-score: 0.9600
+Number of Iterations until Convergence: 21
 Confusion Matrix (for test set):
-  True Negatives (benign predicted correctly): 68
-  False Positives (benign predicted as malignant): 4
-  False Negatives (malignant predicted as benign): 13
-  True Positives (malignant predicted correctly): 29
-Predicted class distribution: 81 predicted benign, 33 predicted malignant
-True class distribution: 72 actually benign, 42 actually malignant
+  True Negatives: 88
+  False Positives: 4
+  False Negatives: 0
+  True Positives: 48
+Predicted distribution: {np.int64(0): np.int64(88), np.int64(1): np.int64(52)}
+True distribution: {np.int64(0): np.int64(92), np.int64(1): np.int64(48)}
