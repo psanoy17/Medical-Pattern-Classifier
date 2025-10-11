@@ -108,7 +108,7 @@ class FNN_Thesis:
         a2 = self._stable_sigmoid(z2)
         
         return a2.squeeze()
-        
+
     def predict(self, X):
         """Predict class based on output threshold"""
         output = self.forward(X)
@@ -174,10 +174,10 @@ def evaluate_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
             obj_func=obj_func,
             dim=num_weights,
             n_colonies=3,
-            n_ants=30,
-            n_samples=80,
-            q=0.1,
-            xi=0.85,
+            n_ants=2,
+            n_samples=136,
+            q=0.8,
+            xi=0.7,
             max_iter=100,
             patience=15,
             sharing_frequency=10,

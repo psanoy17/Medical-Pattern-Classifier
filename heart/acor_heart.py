@@ -4,27 +4,23 @@ import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-import warnings
 import matplotlib.pyplot as plt
+import warnings
 import pickle
 
 # Set random seed for reproducibility
 np.random.seed(42)
 
-# 1. Load and preprocess the data from cancer1.dat
+# 1. Load and preprocess the data from heart1.dat
 # --------------------------------------------------
-# Load the preprocessed data (space-separated, 9 features + 2 one-hot encoded target)
 data = pd.read_csv(
-    os.path.join(os.path.dirname(__file__), 'cancer1.dat'),
+    os.path.join(os.path.dirname(__file__), 'heart1.dat'),
     sep=' ',
     header=None
 )
 
-# The last TWO columns (10 and 11) are the one-hot encoded target [class_0, class_1]
-X = data.iloc[:, :-2].values  # First 9 columns are features
-y_onehot = data.iloc[:, -2:].values   # Last 2 columns are one-hot encoded target
-
-# Convert one-hot encoding back to single label (0 or 1)
+X = data.iloc[:, :-2].values
+y_onehot = data.iloc[:, -2:].values
 y = np.argmax(y_onehot, axis=1)
 
 print(f"Loaded dataset: {X.shape[0]} samples, {X.shape[1]} features")
@@ -42,15 +38,15 @@ X_train, X_test, y_train, y_test = train_test_split(
 print(f"Training set: {len(X_train)} samples")
 print(f"Test set: {len(X_test)} samples")
 
-# 2. Define a simple FNN (9, 6, 1)
+# 2. Define a simple FNN (35, 6, 1)
 # --------------------------------------------------
 class FNN:
     """
     Feedforward Neural Network matching thesis specifications.
-    Architecture: Input(9) -> Hidden(6, ReLU) -> Output(1, Sigmoid)
-    Total weights: 9*6 + 6 + 6*1 + 1 = 67 weights
+    Architecture: Input(35) -> Hidden(6, ReLU) -> Output(1, Sigmoid)
+    Total weights: 35*6 + 6 + 6*1 + 1 = 223 weights
     """
-    def __init__(self, input_dim=9, hidden_dim=6, output_dim=1):
+    def __init__(self, input_dim=35, hidden_dim=6, output_dim=1):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
@@ -64,30 +60,29 @@ class FNN:
         self.W2 = weights[idx:idx+self.hidden_dim*self.output_dim].reshape(self.hidden_dim, self.output_dim)
         idx += self.hidden_dim*self.output_dim
         self.b2 = weights[idx:idx+self.output_dim]
-    
+
     def _stable_sigmoid(self, z):
-        # Clip values to prevent overflow
         z = np.clip(z, -500, 500)
         return 1 / (1 + np.exp(-z))
 
     def forward(self, X):
         z1 = X @ self.W1 + self.b1
-        a1 = np.maximum(0, z1)  # ReLU activation for hidden layer
+        a1 = np.maximum(0, z1)
         z2 = a1 @ self.W2 + self.b2
-        a2 = self._stable_sigmoid(z2)  # Sigmoid for binary classification
+        a2 = self._stable_sigmoid(z2)
         return a2.squeeze()
 
     def predict(self, X):
         return (self.forward(X) > 0.5).astype(int)
 
     @staticmethod
-    def get_num_weights(input_dim=9, hidden_dim=6, output_dim=1):
+    def get_num_weights(input_dim=35, hidden_dim=6, output_dim=1):
         return input_dim*hidden_dim + hidden_dim + hidden_dim*output_dim + output_dim
 
 # 3. SOCHA-ACOR implementation
 # --------------------------------------------------
 class SOCHA_ACOR:
-    def __init__(self, obj_func, dim, n_ants=30, n_samples=120, q=0.1, xi=0.85, max_iter=100, patience=15, seed=42):
+    def __init__(self, obj_func, dim, n_ants=2, n_samples=230, q=0.6, xi=0.9, max_iter=100, patience=15, seed=42):
         self.obj_func = obj_func
         self.dim = dim
         self.n_ants = n_ants
@@ -177,10 +172,7 @@ class SOCHA_ACOR:
                 if (abs(max_y - max_value) < abs(e_rel * max_value + e_abs)) or (max_y < max_value):
                     return max_X, max_y, iteration + 1
 
-            print(f"Iteration {iteration+1}/{self.max_iter}, Best Loss: {max_y:.4f}")
-            
             if iteration - best_iter > self.patience:
-                print(f"Early stopping at iteration {iteration+1}")
                 return max_X, max_y, iteration + 1
 
         return max_X, max_y, self.max_iter
@@ -270,141 +262,189 @@ class SOCHA_ACOR:
 
 # 4. Objective function (binary cross-entropy loss)
 # --------------------------------------------------
-def objective(weights):
-    if weights.ndim == 1:
-        model.set_weights(weights)
-        y_pred = model.forward(X_train)
-        eps = 1e-8
-        loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
-        return loss
-    else:
-        losses = []
-        for w in weights:
-            model.set_weights(w)
-            y_pred = model.forward(X_train)
-            eps = 1e-8
-            loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
-            losses.append(loss)
-        return np.array(losses)
+def objective_function(weights, model, X_train, y_train):
+    """Binary Cross-Entropy Loss"""
+    model.set_weights(weights)
+    y_pred = model.forward(X_train)
+    eps = 1e-8
+    loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
+    return loss
 
-# 5. Model and ACOR parameters
+# 5. Multiple runs evaluation
 # --------------------------------------------------
-input_dim = 9  # 9 features from cancer1.dat
-hidden_dim = 6
-output_dim = 1
-model = FNN(input_dim, hidden_dim, output_dim)
-num_weights = FNN.get_num_weights(input_dim, hidden_dim, output_dim)
-print(f"\nModel architecture: {input_dim}-{hidden_dim}-{output_dim}")
-print(f"Total weights: {num_weights}")
+def evaluate_acor(X_train, X_test, y_train, y_test, n_runs=50):
+    """
+    Evaluate ACOR using 50 independent runs
+    
+    Args:
+        X_train: Training features
+        X_test: Test features
+        y_train: Training labels
+        y_test: Test labels
+        n_runs: Number of independent runs
+        
+    Returns:
+        Dictionary with evaluation results
+    """
+    results = {
+        'accuracy': [],
+        'precision': [],
+        'recall': [],
+        'f1_score': [],
+        'confusion_matrices': [],
+        'best_losses': [],
+        'iterations': []
+    }
+    
+    input_dim = 35
+    hidden_dim = 6
+    output_dim = 1
+    num_weights = FNN.get_num_weights(input_dim, hidden_dim, output_dim)
+    
+    print(f"\nRunning {n_runs} independent experiments...")
+    print("=" * 60)
+    
+    for run in range(n_runs):
+        print(f"Run {run + 1}/{n_runs}", end=" ")
+        
+        # Initialize model
+        model = FNN(input_dim, hidden_dim, output_dim)
+        
+        # Create objective function
+        def obj_func(weights):
+            if weights.ndim == 1:
+                return objective_function(weights, model, X_train, y_train)
+            else:
+                losses = []
+                for w in weights:
+                    losses.append(objective_function(w, model, X_train, y_train))
+                return np.array(losses)
+        
+        # Initialize ACOR
+        acor = SOCHA_ACOR(
+            obj_func=obj_func,
+            dim=num_weights,
+            n_ants=2,
+            n_samples=230,
+            q=0.6,
+            xi=0.9,
+            max_iter=100,
+            patience=15,
+            seed=42 + run  # Different seed for each run
+        )
+        
+        # Optimize
+        best_weights, best_loss, iterations = acor.optimize(lb=-3, ub=3)
+        
+        # Evaluate on test set
+        model.set_weights(best_weights)
+        y_pred = model.predict(X_test)
+        
+        # Calculate metrics
+        acc = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred, zero_division=0)
+        rec = recall_score(y_test, y_pred, zero_division=0)
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        cm = confusion_matrix(y_test, y_pred)
+        
+        # Store results
+        results['accuracy'].append(acc)
+        results['precision'].append(prec)
+        results['recall'].append(rec)
+        results['f1_score'].append(f1)
+        results['confusion_matrices'].append(cm)
+        results['best_losses'].append(best_loss)
+        results['iterations'].append(iterations)
+        
+        print(f"Acc: {acc:.3f}, Prec: {prec:.3f}, Rec: {rec:.3f}, F1: {f1:.3f}, Loss: {best_loss:.3f}")
+    
+    return results
 
-acor = SOCHA_ACOR(obj_func=objective, dim=num_weights, n_ants=30, n_samples=120, q=0.1, xi=0.85, max_iter=100, patience=15)
-lb = -3
-ub = 3
-
-# 6. Run ACOR to optimize FNN weights
+# 6. Main execution
 # --------------------------------------------------
-print("\nStarting ACOR optimization...")
-best_weights, best_loss, n_iterations = acor.optimize(lb, ub)
-
-# 7. Evaluate on test set and save results
-# --------------------------------------------------
-model.set_weights(best_weights)
-y_pred = model.predict(X_test)
-acc = accuracy_score(y_test, y_pred)
-prec = precision_score(y_test, y_pred, zero_division=0)
-rec = recall_score(y_test, y_pred, zero_division=0)
-f1 = f1_score(y_test, y_pred, zero_division=0)
-cm = confusion_matrix(y_test, y_pred)
-
-# Class distribution
-unique_pred, counts_pred = np.unique(y_pred, return_counts=True)
-unique_true, counts_true = np.unique(y_test, return_counts=True)
-
-if len(unique_pred) == 1:
-    warnings.warn(f"Model predicted only one class: {unique_pred[0]}. Metrics may be misleading.")
-
-print(f"\nTest Accuracy: {acc:.4f}")
-print(f"Precision: {prec:.4f}")
-print(f"Recall: {rec:.4f}")
-print(f"F1-score: {f1:.4f}")
-print("Confusion Matrix:")
-print(cm)
-
-# Plot and save metrics bar chart
-metrics = [acc, prec, rec, f1]
-metric_names = ['Accuracy', 'Precision', 'Recall', 'F1-score']
-plt.figure(figsize=(6, 4))
-bars = plt.bar(metric_names, metrics, color=['skyblue', 'orange', 'green', 'red'])
-plt.ylim(0, 1)
-plt.title('Cancer Model Performance Metrics (9 features)')
-plt.ylabel('Score')
-for bar, value in zip(bars, metrics):
-    plt.text(bar.get_x() + bar.get_width() / 2, value + 0.02, f'{value:.2f}', ha='center', va='bottom')
-plt.tight_layout()
-plt.savefig(os.path.join(os.path.dirname(__file__), 'cancer_metrics_bar_chart.png'))
-plt.show()
-
-# Plot confusion matrix
-def plot_confusion_matrix(cm, class_names, save_path=None):
-    fig, ax = plt.subplots()
-    im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    ax.figure.colorbar(im, ax=ax)
-    ax.set(
-        xticks=np.arange(cm.shape[1]),
-        yticks=np.arange(cm.shape[0]),
-        xticklabels=class_names, yticklabels=class_names,
-        ylabel='True label', xlabel='Predicted label',
-        title='Confusion Matrix'
-    )
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
-    thresh = cm.max() / 2.
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            ax.text(j, i, format(cm[i, j], 'd'),
-                    ha="center", va="center",
-                    color="white" if cm[i, j] > thresh else "black")
-    fig.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
+if __name__ == "__main__":
+    print("ACOR for Heart Disease Classification")
+    print("=" * 60)
+    print(f"Architecture: 35 inputs, 6 hidden (ReLU), 1 output (Sigmoid)")
+    print(f"Total weights: {FNN.get_num_weights(35, 6, 1)}")
+    print(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
+    print(f"Evaluation: 50 independent runs")
+    print()
+    
+    # Run evaluation
+    results = evaluate_acor(X_train, X_test, y_train, y_test, n_runs=50)
+    
+    # Calculate final statistics
+    print("\n" + "=" * 60)
+    print("FINAL RESULTS (Averaged across 50 runs)")
+    print("=" * 60)
+    
+    for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
+        mean_val = np.mean(results[metric])
+        std_val = np.std(results[metric])
+        print(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}")
+    
+    print(f"Best Loss: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}")
+    print(f"Iterations: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}")
+    
+    # Calculate average confusion matrix
+    avg_cm = np.mean(results['confusion_matrices'], axis=0)
+    print(f"\nAverage Confusion Matrix:")
+    print(avg_cm)
+    
+    # Save results
+    output_dir = os.path.dirname(__file__)
+    
+    with open(os.path.join(output_dir, 'heart_acor_results.txt'), 'w') as f:
+        f.write("Heart Disease Classification - ACOR (35 Features)\n")
+        f.write("=" * 60 + "\n")
+        f.write(f"Architecture: 35-6-1 (Total weights: 223)\n")
+        f.write(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}\n")
+        f.write(f"Number of runs: 50\n\n")
+        f.write("RESULTS (Mean ± Std)\n")
+        f.write("=" * 60 + "\n")
+        for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
+            mean_val = np.mean(results[metric])
+            std_val = np.std(results[metric])
+            f.write(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}\n")
+        f.write(f"Best Loss: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}\n")
+        f.write(f"Iterations: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}\n")
+        f.write("\nAverage Confusion Matrix:\n")
+        f.write(str(avg_cm))
+    
+    # Save pickle
+    results_data = {
+        'results': results,
+        'architecture': {'input': 35, 'hidden': 6, 'output': 1, 'weights': 223},
+        'evaluation': {'train_samples': len(X_train), 'test_samples': len(X_test), 'runs': 50},
+        'algorithm': 'ACOR',
+        'dataset': 'heart1.dat (35 features)'
+    }
+    
+    with open(os.path.join(output_dir, 'heart_acor_results.pkl'), 'wb') as f:
+        pickle.dump(results_data, f)
+    
+    print(f"\nResults saved to: heart_acor_results.txt and heart_acor_results.pkl")
+    
+    # Create summary plot
+    metrics = ['accuracy', 'precision', 'recall', 'f1_score']
+    means = [np.mean(results[m]) for m in metrics]
+    stds = [np.std(results[m]) for m in metrics]
+    
+    plt.figure(figsize=(10, 6))
+    bars = plt.bar(metrics, means, yerr=stds, capsize=5, 
+                   color=['skyblue', 'orange', 'green', 'red'], alpha=0.7)
+    plt.ylim(0, 1)
+    plt.title('ACOR - Heart Disease Classification (35 features, 50 runs)')
+    plt.ylabel('Score')
+    plt.grid(True, alpha=0.3)
+    
+    for bar, mean, std in zip(bars, means, stds):
+        plt.text(bar.get_x() + bar.get_width() / 2, mean + std + 0.02, 
+                f'{mean:.3f}±{std:.3f}', ha='center', va='bottom')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'heart_acor_performance.png'), dpi=300, bbox_inches='tight')
     plt.show()
-
-output_dir = os.path.dirname(__file__)
-
-plot_confusion_matrix(cm, class_names=["Benign", "Malignant"], 
-                     save_path=os.path.join(output_dir, "cancer_confusion_matrix.png"))
-
-# Save results
-with open(os.path.join(output_dir, 'cancer_result.txt'), 'w') as f:
-    f.write(f"Cancer Classification - 9 Features\n")
-    f.write(f"Architecture: {input_dim}-{hidden_dim}-{output_dim}\n")
-    f.write(f"Total weights: {num_weights}\n\n")
-    f.write(f"Test Accuracy: {acc:.4f}\n")
-    f.write(f"Precision: {prec:.4f}\n")
-    f.write(f"Recall: {rec:.4f}\n")
-    f.write(f"F1-score: {f1:.4f}\n")
-    f.write(f"Number of Iterations until Convergence: {n_iterations}\n")
-    f.write("Confusion Matrix (for test set):\n")
-    f.write(f"  True Negatives: {cm[0,0]}\n")
-    f.write(f"  False Positives: {cm[0,1]}\n")
-    f.write(f"  False Negatives: {cm[1,0]}\n")
-    f.write(f"  True Positives: {cm[1,1]}\n")
-    f.write(f"Predicted distribution: {dict(zip(*np.unique(y_pred, return_counts=True)))}\n")
-    f.write(f"True distribution: {dict(zip(*np.unique(y_test, return_counts=True)))}\n")
-    if len(unique_pred) == 1:
-        f.write(f"WARNING: Model predicted only one class: {unique_pred[0]}\n")
-
-# Save model
-model_data = {
-    'weights': best_weights,
-    'scaler': scaler,
-    'input_dim': input_dim,
-    'hidden_dim': hidden_dim,
-    'output_dim': output_dim,
-    'num_features': 9
-}
-
-with open(os.path.join(output_dir, 'cancer_model.pkl'), 'wb') as f:
-    pickle.dump(model_data, f)
-
-print("\nModel saved to cancer_model.pkl")
-print(f"Results saved to cancer_result.txt")
+    
+    print("Performance plot saved to: heart_acor_performance.png")
