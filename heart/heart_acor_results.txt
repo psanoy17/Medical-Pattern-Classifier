@@ -1,0 +1,20 @@
+Heart Disease Classification - ACOR (35 Features)
+============================================================
+Architecture: 35-6-1 (Total weights: 223)
+Training samples: 736, Test samples: 184
+Number of runs: 50
+
+RESULTS (Mean ± Std)
+============================================================
+Accuracy: 0.6340 ± 0.0660
+Precision: 0.6827 ± 0.0747
+Recall: 0.6673 ± 0.1399
+F1_score: 0.6629 ± 0.0810
+Best Loss: 2.400080 ± 0.418908
+Iterations: 18.4 ± 3.7
+
+Average Confusion Matrix:
+[[48.6  33.4 ]
+ [33.94 68.06]]
+
+Best Model: Run 5 with accuracy 0.7663
