@@ -16,3 +16,5 @@ Iterations: 17.2 ± 1.3
 Average Confusion Matrix:
 [[87.7   4.3 ]
  [ 3.42 44.58]]
+
+Best Model: Run 22 with accuracy 0.9786

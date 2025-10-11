@@ -13,12 +13,16 @@ This implementation follows the thesis specifications:
 import numpy as np
 import pandas as pd
 import os
+import sys
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import warnings
 import matplotlib.pyplot as plt
 import pickle
+
+# Add parent directory to path to import lm_local_search
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lm_local_search import MultipleColonyACOR, LevenbergMarquardt
 
 # Set random seed for reproducibility
@@ -138,7 +142,7 @@ def evaluate_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
         n_runs: Number of independent runs
         
     Returns:
-        Dictionary with evaluation results
+        Dictionary with evaluation results and best model
     """
     # Initialize results storage
     results = {
@@ -150,6 +154,11 @@ def evaluate_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
         'best_losses': [],
         'iterations': []
     }
+    
+    # Track best model across all runs
+    best_overall_accuracy = -1
+    best_model_weights = None
+    best_run_idx = -1
     
     print(f"\nRunning {n_runs} independent experiments...")
     print("=" * 60)
@@ -206,7 +215,18 @@ def evaluate_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
         results['best_losses'].append(best_loss)
         results['iterations'].append(iterations)
         
+        # Track best model
+        if acc > best_overall_accuracy:
+            best_overall_accuracy = acc
+            best_model_weights = best_weights.copy()
+            best_run_idx = run
+        
         print(f"Acc: {acc:.3f}, Prec: {prec:.3f}, Rec: {rec:.3f}, F1: {f1:.3f}, Loss: {best_loss:.3f}")
+    
+    # Add best model info to results
+    results['best_model_weights'] = best_model_weights
+    results['best_run_index'] = best_run_idx
+    results['best_overall_accuracy'] = best_overall_accuracy
     
     return results
 
@@ -242,20 +262,42 @@ if __name__ == "__main__":
     print(f"\nAverage Confusion Matrix:")
     print(avg_cm)
     
+    print(f"\nBest Model: Run {results['best_run_index'] + 1} with accuracy {results['best_overall_accuracy']:.4f}")
+    
     # Save results
     output_dir = os.path.dirname(__file__)
-    results_data = {
-        'results': results,
+    
+    # Save pickle with best model
+    model_data = {
+        'best_model_weights': results['best_model_weights'],
+        'best_run_index': results['best_run_index'],
+        'best_overall_accuracy': results['best_overall_accuracy'],
+        'metrics_summary': {
+            'accuracy_mean': np.mean(results['accuracy']),
+            'accuracy_std': np.std(results['accuracy']),
+            'precision_mean': np.mean(results['precision']),
+            'precision_std': np.std(results['precision']),
+            'recall_mean': np.mean(results['recall']),
+            'recall_std': np.std(results['recall']),
+            'f1_mean': np.mean(results['f1_score']),
+            'f1_std': np.std(results['f1_score']),
+            'loss_mean': np.mean(results['best_losses']),
+            'loss_std': np.std(results['best_losses']),
+            'iterations_mean': np.mean(results['iterations']),
+            'iterations_std': np.std(results['iterations']),
+        },
+        'average_confusion_matrix': avg_cm,
         'architecture': {'input': 9, 'hidden': 6, 'output': 1, 'weights': 67},
         'evaluation': {'train_samples': len(X_train), 'test_samples': len(X_test), 'runs': 50},
         'algorithm': 'ACOR-LM with Multiple Colonies',
-        'dataset': 'cancer1.dat (9 features)'
+        'dataset': 'cancer1.dat (9 features)',
+        'scaler': scaler  # Save scaler for future predictions
     }
     
-    with open(os.path.join(output_dir, 'cancer_acor_lm_results.pkl'), 'wb') as f:
-        pickle.dump(results_data, f)
+    with open(os.path.join(output_dir, 'cancer_acor_lm_model.pkl'), 'wb') as f:
+        pickle.dump(model_data, f)
     
-    print(f"\nResults saved to: {os.path.join(output_dir, 'cancer_acor_lm_results.pkl')}")
+    print(f"\nModel saved to: cancer_acor_lm_model.pkl")
     
     # Create summary plot
     metrics = ['accuracy', 'precision', 'recall', 'f1_score']
