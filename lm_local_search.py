@@ -158,16 +158,6 @@ class LevenbergMarquardt:
         return J
 
 class MultipleColonyACOR:
-    """
-    Multiple Colony ACOR with Levenberg-Marquardt Local Search
-    
-    Implements the parallel multiple colony strategy as described in the thesis:
-    - 3 separate ant colonies
-    - Colonies share best solutions every 10 rounds
-    - 10% of best solutions from one colony replace weaker ones in another
-    - Each colony uses ACOR with LM local search
-    """
-    
     def __init__(self, 
                  obj_func,
                  dim: int,
@@ -177,26 +167,17 @@ class MultipleColonyACOR:
                  q: float = 0.1,
                  xi: float = 0.85,
                  max_iter: int = 100,
-                 patience: int = 15,
+                 patience: int = 15,  # Global stagnation patience
+                 local_patience: int = 5,  # Local stagnation threshold for LM trigger
                  sharing_frequency: int = 10,
                  sharing_ratio: float = 0.1,
                  seed: int = 42):
         """
-        Initialize Multiple Colony ACOR
+        Initialize Multiple Colony ACOR with Global and Local stagnation tracking
         
         Args:
-            obj_func: Objective function to optimize
-            dim: Dimension of the problem
-            n_colonies: Number of parallel colonies
-            n_ants: Number of ants per colony
-            n_samples: Archive size per colony
-            q: Locality parameter
-            xi: Convergence pressure
-            max_iter: Maximum iterations
-            patience: Early stopping patience
-            sharing_frequency: How often colonies share solutions (every N rounds)
-            sharing_ratio: Fraction of solutions to share (0.1 = 10%)
-            seed: Random seed
+            patience: Global stagnation patience (15 iterations)
+            local_patience: Local stagnation threshold for LM trigger (5-7 iterations)
         """
         self.obj_func = obj_func
         self.dim = dim
@@ -206,15 +187,15 @@ class MultipleColonyACOR:
         self.q = q
         self.xi = xi
         self.max_iter = max_iter
-        self.patience = patience
+        self.patience = patience  # Global stagnation patience
+        self.local_patience = local_patience  # Local LM trigger threshold
         self.sharing_frequency = sharing_frequency
         self.sharing_ratio = sharing_ratio
         self.seed = seed
         
-        # Initialize LM optimizer
         self.lm_optimizer = LevenbergMarquardt()
         
-        # Initialize colonies
+        # Initialize colonies with LOCAL patience
         self.colonies = []
         for i in range(n_colonies):
             colony = SingleColonyACOR(
@@ -225,106 +206,124 @@ class MultipleColonyACOR:
                 q=q,
                 xi=xi,
                 max_iter=max_iter,
-                patience=patience,
-                seed=seed + i  # Different seed for each colony
+                patience=local_patience,  # ✅ Use local_patience for LM trigger
+                seed=seed + i
             )
             self.colonies.append(colony)
     
     def optimize(self, lb: float, ub: float, model, X_train: np.ndarray, y_train: np.ndarray):
         """
-        Optimize using multiple colonies with LM local search
+        Optimize using multiple colonies with CORRECTED stopping criteria
         
-        Args:
-            lb: Lower bound for weights
-            ub: Upper bound for weights
-            model: FNN model
-            X_train: Training data
-            y_train: Training labels
-            
-        Returns:
-            Tuple of (best_weights, best_loss, total_iterations)
+        Stopping Rules (Global):
+        1. Global Best Solution hasn't improved for 15 iterations (patience)
+        2. Reached 100 maximum global iterations (max_iter)
+        
+        LM Trigger (Local per colony):
+        - Triggered when colony's local best hasn't improved for 5 iterations (local_patience)
+        - Does NOT stop the algorithm, only applies LM refinement
         """
         # Initialize all colonies
         for colony in self.colonies:
             colony.initialize_archive(lb, ub)
         
+        # ✅ GLOBAL tracking
         best_global_weights = None
         best_global_loss = np.inf
-        total_iterations = 0
+        global_stagnation_counter = 0  # Track global best stagnation
         
+        # Statistics
+        total_colony_runs = 0
+        lm_applications = 0
+        
+        # ===== PHASE 1: ACOR with Adaptive LM Triggering =====
         for iteration in range(self.max_iter):
-            # Run one iteration for each colony
+            # Track if global best improved this iteration
+            global_improved_this_iteration = False
+            
             for colony_idx, colony in enumerate(self.colonies):
                 # Run ACOR iteration
                 colony.run_iteration()
-                total_iterations += 1
+                total_colony_runs += 1
                 
-                # Apply LM local search to best solution
-                if colony.best_weights is not None:
-                    lm_weights, lm_loss, lm_iterations = self.lm_optimizer.optimize(
+                # ✅ ADAPTIVE LM TRIGGER: Based on LOCAL stagnation
+                if colony.has_local_stagnation():  # Colony's local best hasn't improved
+                    print(f"  [Iter {iteration+1}] Colony {colony_idx+1} local stagnation, applying LM...")
+                    
+                    lm_weights, lm_loss, lm_iters = self.lm_optimizer.optimize(
                         model, X_train, y_train, colony.best_weights
                     )
+                    lm_applications += 1
                     
-                    # Update colony's best if LM improved it
                     if lm_loss < colony.best_loss:
-                        colony.best_weights = lm_weights
-                        colony.best_loss = lm_loss
-                    
-                    # Update global best
-                    if lm_loss < best_global_loss:
-                        best_global_loss = lm_loss
-                        best_global_weights = lm_weights.copy()
+                        colony.inject_lm_solution(lm_weights, lm_loss)
+                        print(f"    → LM improved: {colony.best_loss:.6f} → {lm_loss:.6f}")
+                
+                # ✅ Update GLOBAL best
+                if colony.best_loss < best_global_loss:
+                    best_global_loss = colony.best_loss
+                    best_global_weights = colony.best_weights.copy()
+                    global_improved_this_iteration = True  # Mark improvement
             
-            # Share solutions between colonies every sharing_frequency iterations
+            # ✅ Update GLOBAL stagnation counter
+            if global_improved_this_iteration:
+                global_stagnation_counter = 0  # Reset on global improvement
+                print(f"  [Iter {iteration+1}] Global best improved: {best_global_loss:.6f}")
+            else:
+                global_stagnation_counter += 1  # Increment on global stagnation
+            
+            # Inter-colony communication
             if (iteration + 1) % self.sharing_frequency == 0:
                 self._share_solutions()
             
-            # Check for early stopping
-            if self._check_convergence():
+            # ✅ GLOBAL STOPPING CRITERIA
+            # Rule 1: Global best hasn't improved for 'patience' iterations
+            if global_stagnation_counter >= self.patience:
+                print(f"\n✅ Stopping: Global best stagnated for {self.patience} iterations")
+                print(f"Last global improvement at iteration {iteration + 1 - self.patience}")
+                break
+            
+            # Rule 2: Maximum iterations (handled by for loop)
+            if iteration + 1 >= self.max_iter:
+                print(f"\n✅ Stopping: Reached maximum {self.max_iter} iterations")
                 break
         
-        return best_global_weights, best_global_loss, total_iterations
+        # ===== FINAL SUMMARY =====
+        print(f"\n" + "=" * 60)
+        print(f"OPTIMIZATION COMPLETE")
+        print(f"=" * 60)
+        print(f"Total LM applications: {lm_applications}")
+        print(f"Global stagnation at stopping: {global_stagnation_counter} iterations")
+        print(f"Final global best loss: {best_global_loss:.6f}")
+        
+        # ✅ Return best solution found during optimization (no final LM)
+        return best_global_weights, best_global_loss, iteration + 1
     
     def _share_solutions(self):
         """Share best solutions between colonies"""
-        # Collect best solutions from all colonies
         all_solutions = []
         for colony in self.colonies:
             if colony.best_weights is not None:
                 all_solutions.append((colony.best_weights, colony.best_loss))
         
-        # Sort by fitness (lower loss is better)
         all_solutions.sort(key=lambda x: x[1])
-        
-        # Share top solutions
         n_share = max(1, int(self.n_samples * self.sharing_ratio))
         top_solutions = all_solutions[:n_share]
         
-        # Replace worst solutions in each colony with shared solutions
         for colony in self.colonies:
             if len(top_solutions) > 0:
-                # Replace worst solutions with shared ones
                 for i, (weights, loss) in enumerate(top_solutions):
                     if i < len(colony.archive_weights):
-                        # Replace worst solution
                         worst_idx = np.argmax(colony.archive_losses)
                         colony.archive_weights[worst_idx] = weights.copy()
                         colony.archive_losses[worst_idx] = loss
                         
-                        # Update colony's best if needed
                         if loss < colony.best_loss:
                             colony.best_weights = weights.copy()
                             colony.best_loss = loss
-    
-    def _check_convergence(self) -> bool:
-        """Check if all colonies have converged"""
-        for colony in self.colonies:
-            if not colony.has_converged():
-                return False
-        return True
 
 class SingleColonyACOR:
-    """Single colony ACOR implementation for use in multiple colony system"""
+    """Single colony ACOR with local stagnation tracking for LM trigger"""
     
     def __init__(self, obj_func, dim, n_ants, n_samples, q, xi, max_iter, patience, seed):
         self.obj_func = obj_func
@@ -334,27 +333,25 @@ class SingleColonyACOR:
         self.q = q
         self.xi = xi
         self.max_iter = max_iter
-        self.patience = patience
+        self.patience = patience  # ✅ This is now LOCAL stagnation threshold (5-7)
         self.seed = seed
         
-        # Initialize random number generator
         if seed > 0:
             np.random.seed(seed)
         
-        # Colony state
+        # ✅ LOCAL tracking (per colony)
         self.archive_weights = None
         self.archive_losses = None
         self.best_weights = None
         self.best_loss = np.inf
         self.iteration = 0
-        self.no_improvement_count = 0
-        
+        self.no_improvement_count = 0  # ✅ LOCAL stagnation counter
+    
     def initialize_archive(self, lb, ub):
         """Initialize the solution archive"""
         self.archive_weights = np.random.uniform(lb, ub, (self.n_samples, self.dim))
         self.archive_losses = np.array([self.obj_func(w) for w in self.archive_weights])
         
-        # Find best solution
         best_idx = np.argmin(self.archive_losses)
         self.best_weights = self.archive_weights[best_idx].copy()
         self.best_loss = self.archive_losses[best_idx]
@@ -364,7 +361,7 @@ class SingleColonyACOR:
         if self.archive_weights is None:
             raise ValueError("Archive not initialized. Call initialize_archive first.")
         
-        # Generate new solutions using ACOR
+        # Generate new solutions
         new_weights = self._generate_solutions()
         new_losses = np.array([self.obj_func(w) for w in new_weights])
         
@@ -377,41 +374,54 @@ class SingleColonyACOR:
         self.archive_weights = all_weights[sorted_indices[:self.n_samples]]
         self.archive_losses = all_losses[sorted_indices[:self.n_samples]]
         
-        # Update best solution
+        # ✅ Update LOCAL best and stagnation counter
         if self.archive_losses[0] < self.best_loss:
             self.best_loss = self.archive_losses[0]
             self.best_weights = self.archive_weights[0].copy()
-            self.no_improvement_count = 0
+            self.no_improvement_count = 0  # Reset on local improvement
         else:
-            self.no_improvement_count += 1
+            self.no_improvement_count += 1  # Increment on local stagnation
         
         self.iteration += 1
     
+    def has_local_stagnation(self) -> bool:
+        """
+        ✅ Check if colony has local stagnation (for LM trigger)
+        
+        Returns True when local best hasn't improved for 'patience' iterations
+        This triggers LM but does NOT stop the algorithm
+        """
+        return self.no_improvement_count >= self.patience
+    
+    def inject_lm_solution(self, lm_weights: np.ndarray, lm_loss: float):
+        """Inject LM-refined solution back into archive"""
+        # Replace worst solution with LM solution
+        worst_idx = np.argmax(self.archive_losses)
+        self.archive_weights[worst_idx] = lm_weights.copy()
+        self.archive_losses[worst_idx] = lm_loss
+        
+        # Update colony's local best if LM improved
+        if lm_loss < self.best_loss:
+            self.best_weights = lm_weights.copy()
+            self.best_loss = lm_loss
+            self.no_improvement_count = 0  # ✅ Reset local stagnation counter
+    
     def _generate_solutions(self):
         """Generate new solutions using ACOR mechanism"""
-        # Simplified ACOR solution generation
-        # In practice, this would implement the full SOCHA-ACOR algorithm
         new_weights = []
         
         for _ in range(self.n_ants):
-            # Select a solution from archive based on fitness
             probs = 1.0 / (self.archive_losses + 1e-8)
             probs = probs / probs.sum()
             
             selected_idx = np.random.choice(len(self.archive_weights), p=probs)
             selected_weights = self.archive_weights[selected_idx]
             
-            # Add Gaussian noise
             noise = np.random.normal(0, 0.1, self.dim)
             new_weight = selected_weights + noise
             
             new_weights.append(new_weight)
         
         return np.array(new_weights)
-    
-    def has_converged(self) -> bool:
-        """Check if colony has converged"""
-        return (self.iteration >= self.max_iter or 
-                self.no_improvement_count >= self.patience)
 
 
