@@ -249,11 +249,13 @@ def kfold_cross_validation(X, y, n_splits=4, n_runs=50, verbose=True):
     cv_results = {
         'baseline': {
             'fold_results': {metric: [] for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'iterations', 'losses']},
-            'all_results': {metric: [] for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'iterations', 'best_losses']}
+            'all_results': {metric: [] for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'iterations', 'best_losses']},
+            'individual_runs': []  # Store individual run data with fold and run info
         },
         'hybrid': {
             'fold_results': {metric: [] for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'iterations', 'losses']},
-            'all_results': {metric: [] for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'iterations', 'best_losses']}
+            'all_results': {metric: [] for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'iterations', 'best_losses']},
+            'individual_runs': []  # Store individual run data with fold and run info
         },
         'n_folds': n_splits,
         'n_runs_per_fold': n_runs
@@ -309,6 +311,31 @@ def kfold_cross_validation(X, y, n_splits=4, n_runs=50, verbose=True):
         for metric in ['accuracy', 'precision', 'recall', 'f1_score', 'iterations', 'best_losses']:
             cv_results['baseline']['all_results'][metric].extend(baseline_results[metric])
             cv_results['hybrid']['all_results'][metric].extend(hybrid_results[metric])
+        
+        # Store individual run data with fold and run information
+        for run_idx in range(n_runs):
+            cv_results['baseline']['individual_runs'].append({
+                'fold': fold_idx + 1,
+                'run': run_idx + 1,
+                'algorithm': 'Baseline ACOR',
+                'accuracy': baseline_results['accuracy'][run_idx],
+                'precision': baseline_results['precision'][run_idx],
+                'recall': baseline_results['recall'][run_idx],
+                'f1_score': baseline_results['f1_score'][run_idx],
+                'iterations': baseline_results['iterations'][run_idx],
+                'best_loss': baseline_results['best_losses'][run_idx]
+            })
+            cv_results['hybrid']['individual_runs'].append({
+                'fold': fold_idx + 1,
+                'run': run_idx + 1,
+                'algorithm': 'Hybrid ACOR-LM',
+                'accuracy': hybrid_results['accuracy'][run_idx],
+                'precision': hybrid_results['precision'][run_idx],
+                'recall': hybrid_results['recall'][run_idx],
+                'f1_score': hybrid_results['f1_score'][run_idx],
+                'iterations': hybrid_results['iterations'][run_idx],
+                'best_loss': hybrid_results['best_losses'][run_idx]
+            })
         
         # Print fold summary
         if verbose:
@@ -405,6 +432,29 @@ def save_results(cv_results, output_dir):
     
     print(f"\nResults saved to: {txt_path}")
 
+def save_results_to_csv(cv_results, output_dir):
+    """Save all individual run results to CSV file"""
+    # Combine all individual runs from both algorithms
+    all_runs = cv_results['baseline']['individual_runs'] + cv_results['hybrid']['individual_runs']
+    
+    # Create DataFrame
+    df = pd.DataFrame(all_runs)
+    
+    # Reorder columns for better readability
+    column_order = ['fold', 'run', 'algorithm', 'accuracy', 'precision', 'recall', 
+                    'f1_score', 'iterations', 'best_loss']
+    df = df[column_order]
+    
+    # Sort by fold, then algorithm, then run
+    df = df.sort_values(['fold', 'algorithm', 'run']).reset_index(drop=True)
+    
+    # Save to CSV
+    csv_path = os.path.join(output_dir, 'cancer_kfold_all_runs.csv')
+    df.to_csv(csv_path, index=False)
+    
+    print(f"All individual runs saved to CSV: {csv_path}")
+    print(f"Total runs: {len(df)} ({cv_results['n_folds']} folds × {cv_results['n_runs_per_fold']} runs × 2 algorithms)")
+
 def create_comparison_plot(cv_results, output_dir):
     """Create and save comparison bar plot"""
     metrics = ['accuracy', 'precision', 'recall', 'f1_score']
@@ -473,6 +523,9 @@ if __name__ == "__main__":
     # Save results
     output_dir = os.path.dirname(__file__)
     save_results(cv_results, output_dir)
+    
+    # Save all individual runs to CSV
+    save_results_to_csv(cv_results, output_dir)
     
     # Create comparison plot
     create_comparison_plot(cv_results, output_dir)

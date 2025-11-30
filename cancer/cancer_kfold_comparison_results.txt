@@ -16,11 +16,11 @@ Fold 1:
     F1-Score:   0.8804
     Iterations: 17.4
   Hybrid ACOR-LM:
-    Accuracy:   0.9266
-    Precision:  0.8801
-    Recall:     0.9107
-    F1-Score:   0.8949
-    Iterations: 56.6
+    Accuracy:   0.9267
+    Precision:  0.8802
+    Recall:     0.9110
+    F1-Score:   0.8951
+    Iterations: 56.5
 
 Fold 2:
   Baseline ACOR:
@@ -48,7 +48,7 @@ Fold 3:
     Precision:  0.9600
     Recall:     0.9577
     F1-Score:   0.9587
-    Iterations: 33.8
+    Iterations: 33.9
 
 Fold 4:
   Baseline ACOR:
@@ -58,28 +58,28 @@ Fold 4:
     F1-Score:   0.9164
     Iterations: 18.0
   Hybrid ACOR-LM:
-    Accuracy:   0.9600
+    Accuracy:   0.9601
     Precision:  0.9395
-    Recall:     0.9453
-    F1-Score:   0.9420
-    Iterations: 37.8
+    Recall:     0.9457
+    F1-Score:   0.9422
+    Iterations: 38.0
 
 
-OVERALL RESULTS (Mean ± Std)
+OVERALL RESULTS (Mean Â± Std)
 ======================================================================
 
 Baseline ACOR:
-  Accuracy: 0.9381 ± 0.0275
-  Precision: 0.9092 ± 0.0512
-  Recall: 0.9154 ± 0.0650
-  F1_score: 0.9102 ± 0.0419
-  Iterations: 17.6 ± 3.4
-  Loss: 0.262168 ± 0.068617
+  Accuracy: 0.9381 Â± 0.0275
+  Precision: 0.9092 Â± 0.0512
+  Recall: 0.9154 Â± 0.0650
+  F1_score: 0.9102 Â± 0.0419
+  Iterations: 17.6 Â± 3.4
+  Loss: 0.262168 Â± 0.068617
 
 Hybrid ACOR-LM:
-  Accuracy: 0.9513 ± 0.0208
-  Precision: 0.9352 ± 0.0372
-  Recall: 0.9240 ± 0.0441
-  F1_score: 0.9287 ± 0.0309
-  Iterations: 43.7 ± 30.4
-  Loss: 0.026718 ± 0.021688
+  Accuracy: 0.9514 Â± 0.0207
+  Precision: 0.9352 Â± 0.0372
+  Recall: 0.9242 Â± 0.0439
+  F1_score: 0.9288 Â± 0.0308
+  Iterations: 43.8 Â± 30.6
+  Loss: 0.026728 Â± 0.021697
