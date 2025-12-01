@@ -1,27 +1,42 @@
+"""
+Baseline ACOR (SOCHA-ACOR) for Heart Disease Classification
+
+This implementation follows SOCHA's original ACOR algorithm:
+- Ant Colony Optimization for Continuous Domains (ACOR)
+- Uses Gaussian kernel PDF for probabilistic solution selection
+- QR decomposition for orthogonal rotation transformation
+- Neighbor list-based exploration with distance weighting
+
+Reference: Socha, K., & Dorigo, M. (2008). Ant colony optimization for continuous domains.
+
+Architecture: 35 inputs, 6 hidden (ReLU), 1 output (Sigmoid)
+Total weights: 35*6 + 6 + 6*1 + 1 = 223 weights
+"""
+
 import numpy as np
 import pandas as pd
 import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-import matplotlib.pyplot as plt
 import warnings
-import pickle
+import matplotlib.pyplot as plt
 
 # Set random seed for reproducibility
 np.random.seed(42)
 
-# 1. Load and preprocess the data from heart1.dat
-# --------------------------------------------------
+# ==============================================================================
+# 1. DATA LOADING AND PREPROCESSING
+# ==============================================================================
 data = pd.read_csv(
     os.path.join(os.path.dirname(__file__), 'heart1.dat'),
     sep=' ',
     header=None
 )
 
-X = data.iloc[:, :-2].values
-y_onehot = data.iloc[:, -2:].values
-y = np.argmax(y_onehot, axis=1)
+X = data.iloc[:, :-2].values  # First 35 columns are features
+y_onehot = data.iloc[:, -2:].values  # Last 2 columns are one-hot encoded target
+y = np.argmax(y_onehot, axis=1)  # Convert to single label
 
 print(f"Loaded dataset: {X.shape[0]} samples, {X.shape[1]} features")
 print(f"Target distribution: Class 0: {np.sum(y==0)}, Class 1: {np.sum(y==1)}")
@@ -38,13 +53,22 @@ X_train, X_test, y_train, y_test = train_test_split(
 print(f"Training set: {len(X_train)} samples")
 print(f"Test set: {len(X_test)} samples")
 
-# 2. Define a simple FNN (35, 6, 1)
-# --------------------------------------------------
+
+# ==============================================================================
+# 2. FEEDFORWARD NEURAL NETWORK (FNN)
+# ==============================================================================
 class FNN:
     """
     Feedforward Neural Network matching thesis specifications.
+    
     Architecture: Input(35) -> Hidden(6, ReLU) -> Output(1, Sigmoid)
     Total weights: 35*6 + 6 + 6*1 + 1 = 223 weights
+    
+    Weight vector structure:
+    - W1: input-to-hidden weights (35*6 = 210)
+    - b1: hidden biases (6)
+    - W2: hidden-to-output weights (6*1 = 6)
+    - b2: output bias (1)
     """
     def __init__(self, input_dim=35, hidden_dim=6, output_dim=1):
         self.input_dim = input_dim
@@ -52,6 +76,7 @@ class FNN:
         self.output_dim = output_dim
 
     def set_weights(self, weights):
+        """Unpack flat weight vector into layer matrices"""
         idx = 0
         self.W1 = weights[idx:idx+self.input_dim*self.hidden_dim].reshape(self.input_dim, self.hidden_dim)
         idx += self.input_dim*self.hidden_dim
@@ -60,35 +85,66 @@ class FNN:
         self.W2 = weights[idx:idx+self.hidden_dim*self.output_dim].reshape(self.hidden_dim, self.output_dim)
         idx += self.hidden_dim*self.output_dim
         self.b2 = weights[idx:idx+self.output_dim]
-
+    
     def _stable_sigmoid(self, z):
+        """Numerically stable sigmoid to prevent overflow"""
         z = np.clip(z, -500, 500)
         return 1 / (1 + np.exp(-z))
 
     def forward(self, X):
+        """Forward pass: Input -> ReLU -> Sigmoid"""
         z1 = X @ self.W1 + self.b1
-        a1 = np.maximum(0, z1)
+        a1 = np.maximum(0, z1)  # ReLU activation
         z2 = a1 @ self.W2 + self.b2
-        a2 = self._stable_sigmoid(z2)
+        a2 = self._stable_sigmoid(z2)  # Sigmoid activation
         return a2.squeeze()
 
     def predict(self, X):
+        """Binary classification with 0.5 threshold"""
         return (self.forward(X) > 0.5).astype(int)
 
     @staticmethod
     def get_num_weights(input_dim=35, hidden_dim=6, output_dim=1):
+        """Calculate total number of weights in the network"""
         return input_dim*hidden_dim + hidden_dim + hidden_dim*output_dim + output_dim
 
-# 3. SOCHA-ACOR implementation
-# --------------------------------------------------
+
+# ==============================================================================
+# 3. SOCHA-ACOR ALGORITHM (Baseline)
+# ==============================================================================
 class SOCHA_ACOR:
-    def __init__(self, obj_func, dim, n_ants=2, n_samples=230, q=0.6, xi=0.9, max_iter=100, patience=15, seed=42):
+    """
+    SOCHA's Ant Colony Optimization for Continuous Domains (ACOR)
+    
+    This is the baseline algorithm based on Socha & Dorigo (2008).
+    
+    Key Components:
+    1. Solution Archive: Stores k best solutions found so far
+    2. Gaussian Kernel PDF: Probabilistic selection based on solution rank
+    3. QR Decomposition: Orthogonal rotation for correlated sampling
+    4. Neighbor List: All other solutions in archive (for distance computation)
+    5. Adaptive Standard Deviation: Computed from neighbor distances
+    
+    Parameters:
+        obj_func: Objective function to minimize (BCE loss)
+        dim: Dimensionality of search space (number of weights)
+        n_ants: Number of new solutions generated per iteration (default: 2)
+        n_samples: Archive size k (default: 230, based on 80% of 288 samples)
+        q: Locality parameter for Gaussian kernel (default: 0.6)
+        xi: Convergence speed parameter (default: 0.9)
+        max_iter: Maximum iterations (default: 100)
+        patience: Iterations without improvement before stopping (default: 15)
+        seed: Random seed for reproducibility
+    """
+    
+    def __init__(self, obj_func, dim, n_ants=2, n_samples=230, q=0.6, xi=0.9, 
+                 max_iter=100, patience=15, seed=42):
         self.obj_func = obj_func
         self.dim = dim
         self.n_ants = n_ants
-        self.n_samples = n_samples
-        self.q = q
-        self.xi = xi
+        self.n_samples = n_samples  # Archive size (k)
+        self.q = q  # Locality parameter for Gaussian kernel
+        self.xi = xi  # Convergence speed parameter
         self.max_iter = max_iter
         self.patience = patience
         self.seed = seed
@@ -97,195 +153,220 @@ class SOCHA_ACOR:
             np.random.seed(seed)
 
     def optimize(self, lb, ub):
-        """SOCHA-ACOR optimization matching R implementation"""
-        e_abs = 1e-6
-        e_rel = 1e-6
-        max_value = 0
-        eval_count = 0
-        last_impr = self.max_iter
-        nl = np.empty((self.n_samples, self.n_samples - 1), dtype=int)
-        iteration = 0
-
-        max_X = np.full(self.dim, np.nan)
-        max_y = np.inf
-
-        p_X = None
-        p_v = []
-
-        # Initialize archive
-        for i in range(self.n_samples):
-            X = np.random.uniform(lb, ub, self.dim)
-            y = self.obj_func(X)
-            eval_count += 1
+        """
+        Main SOCHA-ACOR optimization loop
+        
+        Args:
+            lb: Lower bound for weight initialization
+            ub: Upper bound for weight initialization
             
-            if p_X is None:
-                p_X = X.reshape(1, -1)
+        Returns:
+            Tuple of (best_weights, best_loss, iterations_used)
+        """
+        # Initialize neighbor list array
+        neighbor_list = np.empty((self.n_samples, self.n_samples - 1), dtype=int)
+        
+        # Initialize tracking variables
+        best_weights = np.full(self.dim, np.nan)
+        best_loss = np.inf
+        best_iteration = 0
+        
+        # Initialize solution archive and fitness values
+        archive_solutions = None
+        archive_fitness = []
+        
+        # ==================================================================
+        # PHASE 1: Archive Initialization
+        # ==================================================================
+        for i in range(self.n_samples):
+            solution = np.random.uniform(lb, ub, self.dim)
+            fitness = self.obj_func(solution)
+            
+            if archive_solutions is None:
+                archive_solutions = solution.reshape(1, -1)
             else:
-                p_X = np.vstack([p_X, X.reshape(1, -1)])
-            p_v.append(float(y))
+                archive_solutions = np.vstack([archive_solutions, solution.reshape(1, -1)])
+            archive_fitness.append(float(fitness))
 
-        p_v = np.array(p_v, dtype=float)
-        p_gr = self._rank_asc_with_random_ties(p_v)
+        archive_fitness = np.array(archive_fitness, dtype=float)
+        archive_ranks = self._rank_ascending_with_random_ties(archive_fitness)
         
         for i in range(self.n_samples):
-            nl[i] = np.delete(np.arange(self.n_samples), i)
+            neighbor_list[i] = np.delete(np.arange(self.n_samples), i)
 
-        imax0 = int(np.argmin(p_v))
-        max_y = float(p_v[imax0])
-        max_X = p_X[imax0]
-        best_iter = 0
+        best_idx = int(np.argmin(archive_fitness))
+        best_loss = float(archive_fitness[best_idx])
+        best_weights = archive_solutions[best_idx].copy()
 
-        # Main optimization loop
+        # ==================================================================
+        # PHASE 2: Main Optimization Loop
+        # ==================================================================
         for iteration in range(self.max_iter):
-            dist_mean = p_X
-            if np.sum(np.std(dist_mean, axis=0)) == 0:
-                return max_X, max_y, iteration + 1
             
-            dist_rank = p_gr
-            o_X = self._gen_X(dist_mean, dist_rank, nl, self.n_ants, self.q, self.n_samples, self.xi)
+            if np.sum(np.std(archive_solutions, axis=0)) == 0:
+                print(f"  [Iter {iteration+1}] Archive converged - all solutions identical")
+                return best_weights, best_loss, iteration + 1
+            
+            new_solutions = self._generate_new_solutions(
+                archive_solutions, archive_ranks, neighbor_list,
+                self.n_ants, self.q, self.n_samples, self.xi
+            )
 
-            if o_X is None or len(o_X) == 0:
-                return max_X, max_y, iteration + 1
+            if new_solutions is None or len(new_solutions) == 0:
+                print(f"  [Iter {iteration+1}] Solution generation failed")
+                return best_weights, best_loss, iteration + 1
 
-            y = self.obj_func(o_X)
-            eval_count += len(o_X)
+            new_fitness = self.obj_func(new_solutions)
 
-            p_X = np.vstack([p_X, o_X])
-            p_v = np.concatenate([p_v, y])
-            p_gr = self._rank_asc_with_random_ties(p_v)
+            archive_solutions = np.vstack([archive_solutions, new_solutions])
+            archive_fitness = np.concatenate([archive_fitness, new_fitness])
+            archive_ranks = self._rank_ascending_with_random_ties(archive_fitness)
 
-            idx_final = p_gr <= self.n_samples
-            p_v = p_v[idx_final]
-            p_gr = p_gr[idx_final]
-            p_X = p_X[idx_final]
+            keep_indices = archive_ranks <= self.n_samples
+            archive_fitness = archive_fitness[keep_indices]
+            archive_ranks = archive_ranks[keep_indices]
+            archive_solutions = archive_solutions[keep_indices]
 
             for i in range(self.n_samples):
-                nl[i] = np.delete(np.arange(self.n_samples), i)
+                neighbor_list[i] = np.delete(np.arange(self.n_samples), i)
 
-            if np.min(y) < max_y:
-                max_y = float(np.min(y))
-                imax = int(np.argmin(y))
-                max_X = o_X[imax]
-                best_iter = iteration
-                last_impr = eval_count
-                
-                if (abs(max_y - max_value) < abs(e_rel * max_value + e_abs)) or (max_y < max_value):
-                    return max_X, max_y, iteration + 1
+            current_best_fitness = np.min(new_fitness)
+            if current_best_fitness < best_loss:
+                best_loss = float(current_best_fitness)
+                best_idx = int(np.argmin(new_fitness))
+                best_weights = new_solutions[best_idx].copy()
+                best_iteration = iteration
 
-            if iteration - best_iter > self.patience:
-                return max_X, max_y, iteration + 1
+            if iteration - best_iteration > self.patience:
+                print(f"  [Iter {iteration+1}] Stopping: No improvement for {self.patience} iterations")
+                return best_weights, best_loss, iteration + 1
 
-        return max_X, max_y, self.max_iter
+        print(f"  [Iter {self.max_iter}] Stopping: Reached maximum iterations")
+        return best_weights, best_loss, self.max_iter
 
-    def _rank_desc_with_random_ties(self, values):
+    def _rank_ascending_with_random_ties(self, values):
+        """Rank values in ascending order with random tie-breaking"""
         n = len(values)
-        perm = np.random.permutation(n)
-        shuffled_vals = values[perm]
-        order = np.argsort(-shuffled_vals, kind='mergesort')
+        permutation = np.random.permutation(n)
+        shuffled_values = values[permutation]
+        
+        sort_order = np.argsort(shuffled_values, kind='mergesort')
         ranks = np.empty(n, dtype=int)
-        ranks[order] = np.arange(1, n + 1)
-        inv_perm = np.empty(n, dtype=int)
-        inv_perm[perm] = np.arange(n)
-        return ranks[inv_perm]
+        ranks[sort_order] = np.arange(1, n + 1)
+        
+        inverse_permutation = np.empty(n, dtype=int)
+        inverse_permutation[permutation] = np.arange(n)
+        
+        return ranks[inverse_permutation]
 
-    def _rank_asc_with_random_ties(self, values):
-        n = len(values)
-        perm = np.random.permutation(n)
-        shuffled_vals = values[perm]
-        order = np.argsort(shuffled_vals, kind='mergesort')
-        ranks = np.empty(n, dtype=int)
-        ranks[order] = np.arange(1, n + 1)
-        inv_perm = np.empty(n, dtype=int)
-        inv_perm[perm] = np.arange(n)
-        return ranks[inv_perm]
+    def _generate_new_solutions(self, archive_solutions, archive_ranks, neighbor_list,
+                                 n_new_solutions, q, k, xi):
+        """Generate new solutions using SOCHA's ACOR mechanism"""
+        num_solutions, num_dimensions = archive_solutions.shape
+        new_solutions = np.empty((n_new_solutions, num_dimensions), dtype=float)
 
-    def _gen_X(self, dist_mean, dist_rank, nl, n_of_points, q, k, xi):
-        num_dists, num_dims = dist_mean.shape
-        X = np.empty((n_of_points, num_dims), dtype=float)
+        ranks = np.arange(1, num_solutions + 1)
+        selection_probs = self._gaussian_kernel_pdf(ranks, mean=1.0, std=q * k)
+        selection_probs = selection_probs / selection_probs.sum()
+        
+        selected_indices = np.random.choice(num_solutions, size=n_new_solutions, 
+                                            replace=True, p=selection_probs)
 
-        probs = self._normal_pdf(np.arange(1, num_dists + 1), mean=1.0, sd=q * k)
-        probs = probs / probs.sum()
-        idx = np.random.choice(num_dists, size=n_of_points, replace=True, p=probs)
-
-        for l in range(n_of_points):
-            j = idx[l]
-            o_dist_mean = dist_mean - dist_mean[j]
-            r_dist_mean = o_dist_mean.copy()
-            available = nl[j]
-            vec = None
-            R = np.eye(num_dims)
+        for solution_idx in range(n_new_solutions):
+            guide_idx = selected_indices[solution_idx]
             
-            for m in range(num_dims - 1):
-                if available.size == 0:
+            centered_archive = archive_solutions - archive_solutions[guide_idx]
+            rotated_archive = centered_archive.copy()
+            
+            available_neighbors = neighbor_list[guide_idx].copy()
+            
+            basis_vectors = None
+            rotation_matrix = np.eye(num_dimensions)
+            
+            for dim_idx in range(num_dimensions - 1):
+                if available_neighbors.size == 0:
                     return None
-                sub = r_dist_mean[available, m:]
-                if sub.shape[0] == 0 or sub.shape[1] == 0:
+                
+                subspace = rotated_archive[available_neighbors, dim_idx:]
+                if subspace.shape[0] == 0 or subspace.shape[1] == 0:
                     return None
-                dis = np.apply_along_axis(self._euc_dist, 1, sub)
-                if np.sum(dis) == 0.0:
+                
+                distances = np.apply_along_axis(self._euclidean_distance, 1, subspace)
+                if np.sum(distances) == 0.0:
                     return None
-                if available.size > 1:
-                    p_choice = np.power(dis, 4.0)
-                    p_choice = p_choice / p_choice.sum()
-                    choose_idx = np.random.choice(len(available), p=p_choice)
-                    choice = available[choose_idx]
+                
+                if available_neighbors.size > 1:
+                    distance_probs = np.power(distances, 4.0)
+                    distance_probs = distance_probs / distance_probs.sum()
+                    chosen_neighbor_idx = np.random.choice(len(available_neighbors), p=distance_probs)
+                    chosen_neighbor = available_neighbors[chosen_neighbor_idx]
                 else:
-                    choice = available[0]
-                new_vec = o_dist_mean[choice]
-                vec = new_vec[None, :] if vec is None else np.vstack([vec, new_vec])
-                Q, _ = np.linalg.qr(vec.T, mode='complete')
-                R = Q
-                if np.linalg.det(R) < 0:
-                    R[:, 0] *= -1
-                r_dist_mean = o_dist_mean @ R
-                available = available[available != choice]
+                    chosen_neighbor = available_neighbors[0]
+                
+                new_basis_vector = centered_archive[chosen_neighbor]
+                if basis_vectors is None:
+                    basis_vectors = new_basis_vector[None, :]
+                else:
+                    basis_vectors = np.vstack([basis_vectors, new_basis_vector])
+                
+                Q, _ = np.linalg.qr(basis_vectors.T, mode='complete')
+                rotation_matrix = Q
+                
+                if np.linalg.det(rotation_matrix) < 0:
+                    rotation_matrix[:, 0] *= -1
+                
+                rotated_archive = centered_archive @ rotation_matrix
+                
+                available_neighbors = available_neighbors[available_neighbors != chosen_neighbor]
 
-            dist_sd = np.array([
-                np.sum(np.abs(r_dist_mean[nl[j], i] - r_dist_mean[j, i])) / (k - 1)
-                for i in range(num_dims)
+            neighbor_indices = neighbor_list[guide_idx]
+            adaptive_std = np.array([
+                np.sum(np.abs(rotated_archive[neighbor_indices, d] - rotated_archive[guide_idx, d])) / (k - 1)
+                for d in range(num_dimensions)
             ])
-            n_x = np.random.normal(loc=r_dist_mean[j], scale=dist_sd * xi, size=(num_dims,))
-            n_x = (R @ n_x) + dist_mean[j]
-            X[l] = n_x
-        return X
+            
+            new_solution_rotated = np.random.normal(
+                loc=rotated_archive[guide_idx],
+                scale=adaptive_std * xi,
+                size=(num_dimensions,)
+            )
+            
+            new_solution = (rotation_matrix @ new_solution_rotated) + archive_solutions[guide_idx]
+            new_solutions[solution_idx] = new_solution
+            
+        return new_solutions
 
-    def _normal_pdf(self, x, mean, sd):
-        if sd <= 0:
+    def _gaussian_kernel_pdf(self, x, mean, std):
+        """Compute Gaussian probability density function"""
+        if std <= 0:
             out = np.zeros_like(x, dtype=float)
             out[np.isclose(x, mean)] = 1.0
             return out
-        z = (x - mean) / sd
-        return np.exp(-0.5 * z * z) / (sd * np.sqrt(2.0 * np.pi))
+        z = (x - mean) / std
+        return np.exp(-0.5 * z * z) / (std * np.sqrt(2.0 * np.pi))
 
-    def _euc_dist(self, d):
-        return float(np.sqrt(np.sum(np.square(d))))
+    def _euclidean_distance(self, vector):
+        """Compute Euclidean norm of a vector"""
+        return float(np.sqrt(np.sum(np.square(vector))))
 
-# 4. Objective function (binary cross-entropy loss)
-# --------------------------------------------------
+
+# ==============================================================================
+# 4. OBJECTIVE FUNCTION (Binary Cross-Entropy Loss)
+# ==============================================================================
 def objective_function(weights, model, X_train, y_train):
-    """Binary Cross-Entropy Loss"""
+    """Binary Cross-Entropy Loss as fitness function"""
     model.set_weights(weights)
     y_pred = model.forward(X_train)
     eps = 1e-8
     loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
     return loss
 
-# 5. Multiple runs evaluation
-# --------------------------------------------------
-def evaluate_acor(X_train, X_test, y_train, y_test, n_runs=50):
-    """
-    Evaluate ACOR using 50 independent runs
-    
-    Args:
-        X_train: Training features
-        X_test: Test features
-        y_train: Training labels
-        y_test: Test labels
-        n_runs: Number of independent runs
-        
-    Returns:
-        Dictionary with evaluation results and best model
-    """
+
+# ==============================================================================
+# 5. EVALUATION FUNCTION
+# ==============================================================================
+def evaluate_baseline_acor(X_train, X_test, y_train, y_test, n_runs=50):
+    """Evaluate Baseline SOCHA-ACOR using 50 independent runs"""
     results = {
         'accuracy': [],
         'precision': [],
@@ -295,11 +376,6 @@ def evaluate_acor(X_train, X_test, y_train, y_test, n_runs=50):
         'best_losses': [],
         'iterations': []
     }
-    
-    # Track best model across all runs
-    best_overall_accuracy = -1
-    best_model_weights = None
-    best_run_idx = -1
     
     input_dim = 35
     hidden_dim = 6
@@ -312,20 +388,14 @@ def evaluate_acor(X_train, X_test, y_train, y_test, n_runs=50):
     for run in range(n_runs):
         print(f"Run {run + 1}/{n_runs}", end=" ")
         
-        # Initialize model
         model = FNN(input_dim, hidden_dim, output_dim)
         
-        # Create objective function
         def obj_func(weights):
             if weights.ndim == 1:
                 return objective_function(weights, model, X_train, y_train)
             else:
-                losses = []
-                for w in weights:
-                    losses.append(objective_function(w, model, X_train, y_train))
-                return np.array(losses)
+                return np.array([objective_function(w, model, X_train, y_train) for w in weights])
         
-        # Initialize ACOR
         acor = SOCHA_ACOR(
             obj_func=obj_func,
             dim=num_weights,
@@ -335,24 +405,20 @@ def evaluate_acor(X_train, X_test, y_train, y_test, n_runs=50):
             xi=0.9,
             max_iter=100,
             patience=15,
-            seed=42 + run  # Different seed for each run
+            seed=42 + run
         )
         
-        # Optimize
         best_weights, best_loss, iterations = acor.optimize(lb=-3, ub=3)
         
-        # Evaluate on test set
         model.set_weights(best_weights)
         y_pred = model.predict(X_test)
         
-        # Calculate metrics
         acc = accuracy_score(y_test, y_pred)
         prec = precision_score(y_test, y_pred, zero_division=0)
         rec = recall_score(y_test, y_pred, zero_division=0)
         f1 = f1_score(y_test, y_pred, zero_division=0)
         cm = confusion_matrix(y_test, y_pred)
         
-        # Store results
         results['accuracy'].append(acc)
         results['precision'].append(prec)
         results['recall'].append(rec)
@@ -361,25 +427,17 @@ def evaluate_acor(X_train, X_test, y_train, y_test, n_runs=50):
         results['best_losses'].append(best_loss)
         results['iterations'].append(iterations)
         
-        # Track best model
-        if acc > best_overall_accuracy:
-            best_overall_accuracy = acc
-            best_model_weights = best_weights.copy()
-            best_run_idx = run
-        
         print(f"Acc: {acc:.3f}, Prec: {prec:.3f}, Rec: {rec:.3f}, F1: {f1:.3f}, Loss: {best_loss:.3f}")
-    
-    # Add best model info to results
-    results['best_model_weights'] = best_model_weights
-    results['best_run_index'] = best_run_idx
-    results['best_overall_accuracy'] = best_overall_accuracy
     
     return results
 
-# 6. Main execution
-# --------------------------------------------------
+
+# ==============================================================================
+# 6. MAIN EXECUTION
+# ==============================================================================
 if __name__ == "__main__":
-    print("ACOR for Heart Disease Classification")
+    print("=" * 60)
+    print("BASELINE ACOR (SOCHA-ACOR) FOR HEART DISEASE CLASSIFICATION")
     print("=" * 60)
     print(f"Architecture: 35 inputs, 6 hidden (ReLU), 1 output (Sigmoid)")
     print(f"Total weights: {FNN.get_num_weights(35, 6, 1)}")
@@ -387,10 +445,12 @@ if __name__ == "__main__":
     print(f"Evaluation: 50 independent runs")
     print()
     
-    # Run evaluation
-    results = evaluate_acor(X_train, X_test, y_train, y_test, n_runs=50)
+    results = evaluate_baseline_acor(X_train, X_test, y_train, y_test, n_runs=50)
     
-    # Calculate final statistics
+    print("\n" + "=" * 60)
+    print("OPTIMIZATION COMPLETE")
+    print("=" * 60)
+    
     print("\n" + "=" * 60)
     print("FINAL RESULTS (Averaged across 50 runs)")
     print("=" * 60)
@@ -403,68 +463,16 @@ if __name__ == "__main__":
     print(f"Best Loss: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}")
     print(f"Iterations: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}")
     
-    # Calculate average confusion matrix
     avg_cm = np.mean(results['confusion_matrices'], axis=0)
     print(f"\nAverage Confusion Matrix:")
     print(avg_cm)
     
-    print(f"\nBest Model: Run {results['best_run_index'] + 1} with accuracy {results['best_overall_accuracy']:.4f}")
+    best_run_idx = np.argmax(results['accuracy'])
+    best_accuracy = results['accuracy'][best_run_idx]
+    print(f"\nBest Run: {best_run_idx + 1} with accuracy {best_accuracy:.4f}")
     
-    # Save results
     output_dir = os.path.dirname(__file__)
     
-    with open(os.path.join(output_dir, 'heart_acor_results.txt'), 'w') as f:
-        f.write("Heart Disease Classification - ACOR (35 Features)\n")
-        f.write("=" * 60 + "\n")
-        f.write(f"Architecture: 35-6-1 (Total weights: 223)\n")
-        f.write(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}\n")
-        f.write(f"Number of runs: 50\n\n")
-        f.write("RESULTS (Mean ± Std)\n")
-        f.write("=" * 60 + "\n")
-        for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
-            mean_val = np.mean(results[metric])
-            std_val = np.std(results[metric])
-            f.write(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}\n")
-        f.write(f"Best Loss: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}\n")
-        f.write(f"Iterations: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}\n")
-        f.write("\nAverage Confusion Matrix:\n")
-        f.write(str(avg_cm))
-        f.write(f"\n\nBest Model: Run {results['best_run_index'] + 1} with accuracy {results['best_overall_accuracy']:.4f}\n")
-    
-    # Save pickle with best model
-    model_data = {
-        'best_model_weights': results['best_model_weights'],
-        'best_run_index': results['best_run_index'],
-        'best_overall_accuracy': results['best_overall_accuracy'],
-        'metrics_summary': {
-            'accuracy_mean': np.mean(results['accuracy']),
-            'accuracy_std': np.std(results['accuracy']),
-            'precision_mean': np.mean(results['precision']),
-            'precision_std': np.std(results['precision']),
-            'recall_mean': np.mean(results['recall']),
-            'recall_std': np.std(results['recall']),
-            'f1_mean': np.mean(results['f1_score']),
-            'f1_std': np.std(results['f1_score']),
-            'loss_mean': np.mean(results['best_losses']),
-            'loss_std': np.std(results['best_losses']),
-            'iterations_mean': np.mean(results['iterations']),
-            'iterations_std': np.std(results['iterations']),
-        },
-        'average_confusion_matrix': avg_cm,
-        'architecture': {'input': 35, 'hidden': 6, 'output': 1, 'weights': 223},
-        'evaluation': {'train_samples': len(X_train), 'test_samples': len(X_test), 'runs': 50},
-        'algorithm': 'ACOR',
-        'dataset': 'heart1.dat (35 features)',
-        'scaler': scaler  # Save scaler for future predictions
-    }
-    
-    with open(os.path.join(output_dir, 'heart_acor_model.pkl'), 'wb') as f:
-        pickle.dump(model_data, f)
-    
-    print(f"\nModel saved to: heart_acor_model.pkl")
-    print(f"Results saved to: heart_acor_results.txt")
-    
-    # Create summary plot
     metrics = ['accuracy', 'precision', 'recall', 'f1_score']
     means = [np.mean(results[m]) for m in metrics]
     stds = [np.std(results[m]) for m in metrics]
@@ -473,7 +481,7 @@ if __name__ == "__main__":
     bars = plt.bar(metrics, means, yerr=stds, capsize=5, 
                    color=['skyblue', 'orange', 'green', 'red'], alpha=0.7)
     plt.ylim(0, 1)
-    plt.title('ACOR - Heart Disease Classification (35 features, 50 runs)')
+    plt.title('Baseline SOCHA-ACOR - Heart Disease Classification (35 features, 50 runs)')
     plt.ylabel('Score')
     plt.grid(True, alpha=0.3)
     
@@ -485,4 +493,4 @@ if __name__ == "__main__":
     plt.savefig(os.path.join(output_dir, 'heart_acor_performance.png'), dpi=300, bbox_inches='tight')
     plt.show()
     
-    print("Performance plot saved to: heart_acor_performance.png")
+    print("\nPerformance plot saved to: heart_acor_performance.png")
