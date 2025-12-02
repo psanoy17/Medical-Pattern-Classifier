@@ -24,6 +24,13 @@ class LevenbergMarquardt:
     The damping factor μ controls this interpolation:
     - Small μ: More like Gauss-Newton
     - Large μ: More like gradient descent
+    
+    Mathematical Formulation:
+    - Error vector: e = y_pred - y_true
+    - Jacobian: J[i,j] = ∂e[i] / ∂w[j]
+    - Approximate Hessian: H ≈ J^T @ J
+    - Update equation: (J^T @ J + μI) @ Δw = J^T @ e
+    - Weight update: w_new = w - Δw (gradient descent direction)
     """
     
     def __init__(self, 
@@ -73,39 +80,45 @@ class LevenbergMarquardt:
         """
         weights = initial_weights.copy()
         mu = self.initial_mu
-        iteration = 0
         
+        # Set initial weights and compute initial loss
         model.set_weights(weights)
         current_loss = self._compute_loss(model, X_train, y_train)
         
         for iteration in range(self.max_iterations):
-            # Compute Jacobian and error vector
+            # Ensure model has current weights before computing Jacobian
+            # (This is now guaranteed by the fix below)
+            model.set_weights(weights)
+            
+            # Compute Jacobian and error vector at current weights
             jacobian = self._compute_jacobian(model, X_train, y_train, weights)
             error_vector = self._compute_error_vector(model, X_train, y_train)
             
-            # Approximate Hessian: H ≈ J^T * J
+            # Approximate Hessian: H ≈ J^T @ J
             hessian_approx = jacobian.T @ jacobian
             
             # Damped Hessian: H + μI
             hessian_damped = hessian_approx + mu * np.eye(hessian_approx.shape[0])
             
-            # Solve for weight update: (H + μI) * Δw = J^T * e
+            # Solve for weight update: (H + μI) @ Δw = J^T @ e
             try:
                 delta_weights = np.linalg.solve(hessian_damped, jacobian.T @ error_vector)
             except np.linalg.LinAlgError:
                 # Use pseudo-inverse if matrix is singular
                 delta_weights = np.linalg.pinv(hessian_damped) @ (jacobian.T @ error_vector)
             
-            # Apply weight update
-            new_weights = weights - delta_weights
-            model.set_weights(new_weights)
-            new_loss = self._compute_loss(model, X_train, y_train)
+            # Compute candidate weights (w_new = w - Δw)
+            candidate_weights = weights - delta_weights
+            
+            # Evaluate candidate weights
+            model.set_weights(candidate_weights)
+            candidate_loss = self._compute_loss(model, X_train, y_train)
             
             # Adaptive damping factor adjustment
-            if new_loss < current_loss:
+            if candidate_loss < current_loss:
                 # Step succeeded: accept update and decrease μ
-                weights = new_weights
-                current_loss = new_loss
+                weights = candidate_weights
+                current_loss = candidate_loss
                 mu = max(mu * self.mu_decrease_factor, self.min_mu)
                 
                 # Check convergence
@@ -113,9 +126,16 @@ class LevenbergMarquardt:
                     break
             else:
                 # Step failed: reject update and increase μ
+                # CRITICAL FIX: Revert model to previous weights
+                model.set_weights(weights)
                 mu = min(mu * self.mu_increase_factor, self.max_mu)
+                
+                # Check if μ has reached maximum (algorithm stuck)
                 if mu >= self.max_mu:
                     break
+        
+        # Ensure model has final optimized weights
+        model.set_weights(weights)
         
         return weights, current_loss, iteration + 1
     
@@ -124,14 +144,27 @@ class LevenbergMarquardt:
         Compute binary cross-entropy loss
         
         BCE = -mean(y * log(p) + (1-y) * log(1-p))
+        
+        Note: We use BCE for the actual loss value, but the LM algorithm
+        minimizes the sum of squared errors (e^T @ e) for the update step.
+        This is a common approach in neural network training with LM.
         """
         y_pred = model.forward(X_train)
         eps = 1e-8
-        loss = -np.mean(y_train * np.log(y_pred + eps) + (1 - y_train) * np.log(1 - y_pred + eps))
+        y_pred = np.clip(y_pred, eps, 1 - eps)
+        loss = -np.mean(y_train * np.log(y_pred) + (1 - y_train) * np.log(1 - y_pred))
         return loss
     
     def _compute_error_vector(self, model, X_train: np.ndarray, y_train: np.ndarray) -> np.ndarray:
-        """Compute error vector (predicted - actual)"""
+        """
+        Compute error vector (predicted - actual)
+        
+        Using e = y_pred - y_true, the gradient is J^T @ e,
+        and the update rule is w_new = w - Δw.
+        
+        Returns:
+            Error vector of shape (n_samples,)
+        """
         y_pred = model.forward(X_train)
         return y_pred - y_train
     
@@ -141,6 +174,17 @@ class LevenbergMarquardt:
         Compute Jacobian matrix using finite differences
         
         J[i,j] = ∂error[i] / ∂weight[j]
+        
+        where error[i] = y_pred[i] - y_true[i]
+        
+        Args:
+            model: Neural network model
+            X_train: Training features
+            y_train: Training labels
+            weights: Current weight vector
+            
+        Returns:
+            Jacobian matrix of shape (n_samples, n_weights)
         """
         n_samples = X_train.shape[0]
         n_weights = len(weights)
@@ -148,15 +192,20 @@ class LevenbergMarquardt:
         
         jacobian = np.zeros((n_samples, n_weights))
         
+        # Compute base error with current weights
         model.set_weights(weights)
         error_base = self._compute_error_vector(model, X_train, y_train)
         
+        # Compute partial derivatives using forward differences
         for i in range(n_weights):
             weights_perturbed = weights.copy()
             weights_perturbed[i] += epsilon
             model.set_weights(weights_perturbed)
             error_perturbed = self._compute_error_vector(model, X_train, y_train)
             jacobian[:, i] = (error_perturbed - error_base) / epsilon
+        
+        # Restore original weights after Jacobian computation
+        model.set_weights(weights)
         
         return jacobian
 
