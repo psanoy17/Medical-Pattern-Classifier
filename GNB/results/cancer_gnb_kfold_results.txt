@@ -1,0 +1,57 @@
+CANCER Classification - Gaussian Naive Bayes
+K-Fold Cross-Validation Results
+======================================================================
+Number of folds: 4
+Runs per fold: 50 (repeated for consistency)
+Note: GNB is deterministic; all runs within a fold are identical.
+
+PER-FOLD RESULTS
+======================================================================
+
+Fold 1:
+  Accuracy:   0.9200
+  Precision:  0.8286
+  Recall:     0.9667
+  F1-Score:   0.8923
+  Confusion Matrix:
+    Benign: [103  12]
+    Malignant: [ 2 58]
+
+Fold 2:
+  Accuracy:   0.9771
+  Precision:  0.9667
+  Recall:     0.9667
+  F1-Score:   0.9667
+  Confusion Matrix:
+    Benign: [113   2]
+    Malignant: [ 2 58]
+
+Fold 3:
+  Accuracy:   0.9771
+  Precision:  0.9524
+  Recall:     0.9836
+  F1-Score:   0.9677
+  Confusion Matrix:
+    Benign: [111   3]
+    Malignant: [ 1 60]
+
+Fold 4:
+  Accuracy:   0.9598
+  Precision:  0.9077
+  Recall:     0.9833
+  F1-Score:   0.9440
+  Confusion Matrix:
+    Benign: [108   6]
+    Malignant: [ 1 59]
+
+
+OVERALL RESULTS (Mean ± Std across all folds)
+======================================================================
+  Accuracy: 0.9585 ± 0.0233
+  Precision: 0.9138 ± 0.0538
+  Recall: 0.9751 ± 0.0084
+  F1_score: 0.9427 ± 0.0306
+
+Average Confusion Matrix:
+  Benign: [108.75   5.75]
+  Malignant: [ 1.5  58.75]

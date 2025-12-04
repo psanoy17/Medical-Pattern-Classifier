@@ -1,0 +1,57 @@
+HEART Classification - Gaussian Naive Bayes
+K-Fold Cross-Validation Results
+======================================================================
+Number of folds: 4
+Runs per fold: 50 (repeated for consistency)
+Note: GNB is deterministic; all runs within a fold are identical.
+
+PER-FOLD RESULTS
+======================================================================
+
+Fold 1:
+  Accuracy:   0.7217
+  Precision:  0.9706
+  Recall:     0.5156
+  F1-Score:   0.6735
+  Confusion Matrix:
+    Negative: [100   2]
+    Positive: [62 66]
+
+Fold 2:
+  Accuracy:   0.7087
+  Precision:  0.8488
+  Recall:     0.5748
+  F1-Score:   0.6854
+  Confusion Matrix:
+    Negative: [90 13]
+    Positive: [54 73]
+
+Fold 3:
+  Accuracy:   0.6870
+  Precision:  0.8313
+  Recall:     0.5433
+  F1-Score:   0.6571
+  Confusion Matrix:
+    Negative: [89 14]
+    Positive: [58 69]
+
+Fold 4:
+  Accuracy:   0.6478
+  Precision:  0.8108
+  Recall:     0.4724
+  F1-Score:   0.5970
+  Confusion Matrix:
+    Negative: [89 14]
+    Positive: [67 60]
+
+
+OVERALL RESULTS (Mean ± Std across all folds)
+======================================================================
+  Accuracy: 0.6913 ± 0.0280
+  Precision: 0.8654 ± 0.0622
+  Recall: 0.5265 ± 0.0376
+  F1_score: 0.6533 ± 0.0340
+
+Average Confusion Matrix:
+  Negative: [92.   10.75]
+  Positive: [60.25 67.  ]

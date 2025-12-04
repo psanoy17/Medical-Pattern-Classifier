@@ -1,0 +1,13 @@
+index,pred,prob0,prob1,y_true
+0,non-diabetic,0.574873,0.425127,non-diabetic
+1,non-diabetic,0.575588,0.424412,diabetic
+2,diabetic,0.000101,0.999899,non-diabetic
+3,non-diabetic,0.862927,0.137073,diabetic
+4,diabetic,0.000013,0.999987,non-diabetic
+5,diabetic,0.000012,0.999988,diabetic
+6,diabetic,0.000000,1.000000,non-diabetic
+7,diabetic,0.000334,0.999666,diabetic
+8,diabetic,0.000000,1.000000,non-diabetic
+9,diabetic,0.000000,1.000000,diabetic
+10,diabetic,0.000000,1.000000,non-diabetic
+11,diabetic,0.000001,0.999999,diabetic

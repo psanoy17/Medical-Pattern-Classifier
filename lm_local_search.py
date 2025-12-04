@@ -355,8 +355,10 @@ class MultipleColonyACOR:
             
             # Global stopping criteria (patience-based)
             if global_stagnation_counter > self.patience:
+                print(f"  [Iter {iteration+1}] Stopping: No improvement for {self.patience} iterations")
                 break
-        
+
+        print(f"  [Iter {self.max_iter}] Stopping: Reached maximum iterations")
         return best_global_weights, best_global_loss, iteration + 1
     
     def _share_solutions_between_colonies(self):
@@ -494,13 +496,13 @@ class SingleColonyACOR:
         
         # Check for archive convergence (all solutions identical)
         if np.sum(np.std(self.archive_solutions, axis=0)) == 0:
-            return
+            return False
         
         # Generate new solutions using ACOR mechanism
         new_solutions = self._generate_new_solutions()
         
         if new_solutions is None or len(new_solutions) == 0:
-            return
+            return False
         
         # Evaluate new solutions
         new_fitness = np.array([self.obj_func(w) for w in new_solutions])
@@ -530,6 +532,7 @@ class SingleColonyACOR:
             self.best_iteration = self.iteration
         
         self.iteration += 1
+        return True
     
     def _generate_new_solutions(self):
         """

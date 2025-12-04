@@ -1,0 +1,9 @@
+index,pred,prob0,prob1,y_true
+0,Positive,0.001545,0.998455,Negative
+1,Negative,1.000000,0.000000,Positive
+2,Negative,0.989316,0.010684,Positive
+3,Negative,1.000000,0.000000,Negative
+4,Positive,0.023529,0.976471,Negative
+5,Positive,0.000005,0.999995,Negative
+6,Positive,0.000000,1.000000,Negative
+7,Negative,1.000000,0.000000,Positive

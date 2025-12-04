@@ -1,0 +1,57 @@
+DIABETES Classification - Gaussian Naive Bayes
+K-Fold Cross-Validation Results
+======================================================================
+Number of folds: 4
+Runs per fold: 50 (repeated for consistency)
+Note: GNB is deterministic; all runs within a fold are identical.
+
+PER-FOLD RESULTS
+======================================================================
+
+Fold 1:
+  Accuracy:   0.7448
+  Precision:  0.7639
+  Recall:     0.8800
+  F1-Score:   0.8178
+  Confusion Matrix:
+    Non-Diabetic: [33 34]
+    Diabetic: [ 15 110]
+
+Fold 2:
+  Accuracy:   0.7552
+  Precision:  0.7955
+  Recall:     0.8400
+  F1-Score:   0.8171
+  Confusion Matrix:
+    Non-Diabetic: [40 27]
+    Diabetic: [ 20 105]
+
+Fold 3:
+  Accuracy:   0.8333
+  Precision:  0.8720
+  Recall:     0.8720
+  F1-Score:   0.8720
+  Confusion Matrix:
+    Non-Diabetic: [51 16]
+    Diabetic: [ 16 109]
+
+Fold 4:
+  Accuracy:   0.6927
+  Precision:  0.7661
+  Recall:     0.7600
+  F1-Score:   0.7631
+  Confusion Matrix:
+    Non-Diabetic: [38 29]
+    Diabetic: [30 95]
+
+
+OVERALL RESULTS (Mean ± Std across all folds)
+======================================================================
+  Accuracy: 0.7565 ± 0.0503
+  Precision: 0.7994 ± 0.0437
+  Recall: 0.8380 ± 0.0475
+  F1_score: 0.8175 ± 0.0385
+
+Average Confusion Matrix:
+  Non-Diabetic: [40.5 26.5]
+  Diabetic: [ 20.25 104.75]

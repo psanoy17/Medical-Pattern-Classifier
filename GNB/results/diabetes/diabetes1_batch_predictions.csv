@@ -1,0 +1,11 @@
+index,pred,prob0,prob1
+0,Diabetic,0.073185,0.926815
+1,Non-Diabetic,0.517759,0.482241
+2,Diabetic,0.224442,0.775558
+3,Diabetic,0.485059,0.514941
+4,Diabetic,0.039738,0.960262
+5,Non-Diabetic,0.951044,0.048956
+6,Diabetic,0.191193,0.808807
+7,Diabetic,0.006286,0.993714
+8,Non-Diabetic,1.000000,0.000000
+9,Diabetic,0.067188,0.932812
