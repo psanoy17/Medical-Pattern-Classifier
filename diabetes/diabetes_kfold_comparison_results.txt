@@ -1,0 +1,85 @@
+Diabetes Classification - Baseline ACOR vs Hybrid ACOR-LM
+K-Fold Cross-Validation Comparison
+======================================================================
+Architecture: 8-6-1 (Total weights: 61)
+Number of folds: 4
+Runs per fold per algorithm: 50
+
+PER-FOLD RESULTS
+======================================================================
+
+Fold 1:
+  Baseline ACOR:
+    Accuracy:   0.6283
+    Precision:  0.7194
+    Recall:     0.7115
+    F1-Score:   0.7084
+    Iterations: 19.1
+  Hybrid ACOR-LM:
+    Accuracy:   0.7077
+    Precision:  0.7551
+    Recall:     0.8160
+    F1-Score:   0.7841
+    Iterations: 26.9
+
+Fold 2:
+  Baseline ACOR:
+    Accuracy:   0.6472
+    Precision:  0.7233
+    Recall:     0.7485
+    F1-Score:   0.7266
+    Iterations: 20.7
+  Hybrid ACOR-LM:
+    Accuracy:   0.7752
+    Precision:  0.8008
+    Recall:     0.8717
+    F1-Score:   0.8346
+    Iterations: 24.7
+
+Fold 3:
+  Baseline ACOR:
+    Accuracy:   0.6270
+    Precision:  0.7443
+    Recall:     0.6691
+    F1-Score:   0.6932
+    Iterations: 20.9
+  Hybrid ACOR-LM:
+    Accuracy:   0.7716
+    Precision:  0.8357
+    Recall:     0.8083
+    F1-Score:   0.8216
+    Iterations: 25.0
+
+Fold 4:
+  Baseline ACOR:
+    Accuracy:   0.6173
+    Precision:  0.7187
+    Recall:     0.6851
+    F1-Score:   0.6929
+    Iterations: 21.0
+  Hybrid ACOR-LM:
+    Accuracy:   0.7340
+    Precision:  0.7809
+    Recall:     0.8222
+    F1-Score:   0.8009
+    Iterations: 24.4
+
+
+OVERALL RESULTS (Mean ± Std)
+======================================================================
+
+Baseline ACOR:
+  Accuracy: 0.6299 ± 0.0713
+  Precision: 0.7264 ± 0.0635
+  Recall: 0.7036 ± 0.1418
+  F1_score: 0.7053 ± 0.0857
+  Iterations: 20.4 ± 6.8
+  Loss: 1.342622 ± 0.255473
+
+Hybrid ACOR-LM:
+  Accuracy: 0.7471 ± 0.0342
+  Precision: 0.7931 ± 0.0334
+  Recall: 0.8296 ± 0.0341
+  F1_score: 0.8103 ± 0.0249
+  Iterations: 25.3 ± 5.9
+  Loss: 0.399771 ± 0.021644
