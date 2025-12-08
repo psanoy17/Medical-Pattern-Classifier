@@ -32,7 +32,7 @@ from lm_local_search import MultipleColonyACOR, LevenbergMarquardt
 np.random.seed(42)
 
 # Static loss threshold from baseline ACOR (UPDATE THIS VALUE after running baseline)
-LOSS_THRESHOLD = 0.450000  # Placeholder - update after running acor_heart.py
+LOSS_THRESHOLD = 2.400080
 
 
 # ==============================================================================
