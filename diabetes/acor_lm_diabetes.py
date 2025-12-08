@@ -31,6 +31,9 @@ from lm_local_search import MultipleColonyACOR, LevenbergMarquardt
 # Set random seed for reproducibility
 np.random.seed(42)
 
+# Static loss threshold from baseline ACOR (UPDATE THIS VALUE after running baseline)
+LOSS_THRESHOLD = 1.341828
+
 
 # ==============================================================================
 # 1. DATA LOADING AND PREPROCESSING
@@ -70,6 +73,12 @@ class FNN:
     
     Architecture: Input(8) -> Hidden(6, ReLU) -> Output(1, Sigmoid)
     Total weights: 8*6 + 6 + 6*1 + 1 = 61 weights
+    
+    Weight vector structure:
+    - W1: input-to-hidden weights (8*6 = 48)
+    - b1: hidden biases (6)
+    - W2: hidden-to-output weights (6*1 = 6)
+    - b2: output bias (1)
     """
     def __init__(self, input_dim=8, hidden_dim=6, output_dim=1):
         self.input_dim = input_dim
@@ -114,10 +123,23 @@ class FNN:
 # 3. OBJECTIVE FUNCTION (Binary Cross-Entropy Loss)
 # ==============================================================================
 def objective_function(weights, model, X_train, y_train):
-    """Binary Cross-Entropy Loss as fitness function"""
+    """
+    Binary Cross-Entropy Loss as fitness function
+    
+    BCE = -mean(y * log(p) + (1-y) * log(1-p))
+    
+    Args:
+        weights: Flat weight vector for FNN
+        model: FNN instance
+        X_train: Training features
+        y_train: Training labels
+        
+    Returns:
+        BCE loss value (lower is better)
+    """
     model.set_weights(weights)
     y_pred = model.forward(X_train)
-    eps = 1e-8
+    eps = 1e-8  # Small constant to prevent log(0)
     loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
     return loss
 
@@ -125,8 +147,21 @@ def objective_function(weights, model, X_train, y_train):
 # ==============================================================================
 # 4. EVALUATION FUNCTION
 # ==============================================================================
-def evaluate_hybrid_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
-    """Evaluate Hybrid ACOR-LM using 50 independent runs"""
+def evaluate_hybrid_acor_lm(X_train, X_test, y_train, y_test, n_runs=50, loss_threshold=LOSS_THRESHOLD):
+    """
+    Evaluate Hybrid ACOR-LM using 50 independent runs
+    
+    Args:
+        X_train: Training features
+        X_test: Test features
+        y_train: Training labels
+        y_test: Test labels
+        n_runs: Number of independent runs
+        loss_threshold: Static threshold for iteration counting
+        
+    Returns:
+        Dictionary with evaluation results including iteration-to-threshold
+    """
     results = {
         'accuracy': [],
         'precision': [],
@@ -134,7 +169,9 @@ def evaluate_hybrid_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
         'f1_score': [],
         'confusion_matrices': [],
         'best_losses': [],
-        'iterations': []
+        'iterations': [],
+        'iterations_to_threshold': [],
+        'threshold_reached': []
     }
     
     input_dim = 8
@@ -143,16 +180,20 @@ def evaluate_hybrid_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
     num_weights = FNN.get_num_weights(input_dim, hidden_dim, output_dim)
     
     print(f"\nRunning {n_runs} independent experiments...")
+    print(f"Loss Threshold: {loss_threshold:.6f}")
     print("=" * 60)
     
     for run in range(n_runs):
         print(f"Run {run + 1}/{n_runs}", end=" ")
         
+        # Initialize model
         model = FNN(input_dim, hidden_dim, output_dim)
         
+        # Create objective function wrapper
         def obj_func(weights):
             return objective_function(weights, model, X_train, y_train)
         
+        # Initialize and run ACOR-LM with threshold tracking
         acor_lm = MultipleColonyACOR(
             obj_func=obj_func,
             dim=num_weights,
@@ -166,22 +207,29 @@ def evaluate_hybrid_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
             local_patience=5,
             sharing_frequency=10,
             sharing_ratio=0.1,
-            seed=42 + run
+            seed=42 + run  # Different seed for each run
         )
         
-        best_weights, best_loss, iterations = acor_lm.optimize(
-            lb=-3, ub=3, model=model, X_train=X_train, y_train=y_train
+        best_weights, best_loss, iterations, iter_to_threshold = acor_lm.optimize(
+            lb=-3, ub=3, model=model, X_train=X_train, y_train=y_train,
+            loss_threshold=loss_threshold
         )
         
+        # Determine if threshold was reached (101 is penalty for not reached)
+        threshold_reached = iter_to_threshold < 101
+        
+        # Evaluate on test set
         model.set_weights(best_weights)
         y_pred = model.predict(X_test)
         
+        # Calculate metrics
         acc = accuracy_score(y_test, y_pred)
         prec = precision_score(y_test, y_pred, zero_division=0)
         rec = recall_score(y_test, y_pred, zero_division=0)
         f1 = f1_score(y_test, y_pred, zero_division=0)
         cm = confusion_matrix(y_test, y_pred)
         
+        # Store results
         results['accuracy'].append(acc)
         results['precision'].append(prec)
         results['recall'].append(rec)
@@ -189,8 +237,11 @@ def evaluate_hybrid_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
         results['confusion_matrices'].append(cm)
         results['best_losses'].append(best_loss)
         results['iterations'].append(iterations)
+        results['iterations_to_threshold'].append(iter_to_threshold)
+        results['threshold_reached'].append(threshold_reached)
         
-        print(f"Acc: {acc:.3f}, Prec: {prec:.3f}, Rec: {rec:.3f}, F1: {f1:.3f}, Loss: {best_loss:.3f}")
+        status = f"Iter2Thresh={iter_to_threshold}" if threshold_reached else "NOT REACHED (penalty=101)"
+        print(f"Acc: {acc:.3f}, Loss: {best_loss:.4f}, Iter: {iterations}, {status}")
     
     return results
 
@@ -199,61 +250,117 @@ def evaluate_hybrid_acor_lm(X_train, X_test, y_train, y_test, n_runs=50):
 # 5. MAIN EXECUTION
 # ==============================================================================
 if __name__ == "__main__":
-    print("=" * 60)
+    print("=" * 70)
     print("HYBRID ACOR-LM FOR DIABETES CLASSIFICATION")
-    print("=" * 60)
+    print("=" * 70)
     print(f"Architecture: 8 inputs, 6 hidden (ReLU), 1 output (Sigmoid)")
     print(f"Total weights: {FNN.get_num_weights(8, 6, 1)}")
     print(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
     print(f"Evaluation: 50 independent runs")
+    print(f"Loss Threshold (from Baseline): {LOSS_THRESHOLD:.6f}")
     print()
     
+    # Run evaluation
     results = evaluate_hybrid_acor_lm(X_train, X_test, y_train, y_test, n_runs=50)
     
-    print("\n" + "=" * 60)
-    print("OPTIMIZATION COMPLETE")
-    print("=" * 60)
-    
-    print("\n" + "=" * 60)
+    # ==================================================================
+    # PRINT FINAL RESULTS
+    # ==================================================================
+    print("\n" + "=" * 70)
     print("FINAL RESULTS (Averaged across 50 runs)")
-    print("=" * 60)
+    print("=" * 70)
     
+    # Performance metrics
+    print("\n--- Performance Metrics ---")
     for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
         mean_val = np.mean(results[metric])
         std_val = np.std(results[metric])
-        print(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}")
+        print(f"{metric.capitalize():12}: {mean_val:.4f} ± {std_val:.4f}")
     
-    print(f"Best Loss: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}")
-    print(f"Iterations: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}")
+    print(f"\n{'Best Loss':12}: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}")
+    print(f"{'Iterations':12}: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}")
     
+    # Iteration-based Time-to-Target Analysis
+    print("\n--- Time-to-Target Analysis (Iterations) ---")
+    print(f"Target Threshold (from Baseline): {LOSS_THRESHOLD:.6f}")
+    
+    # Success rate
+    success_count = sum(results['threshold_reached'])
+    success_rate = success_count / len(results['threshold_reached']) * 100
+    print(f"Success Rate: {success_rate:.1f}% ({success_count}/50 runs reached threshold)")
+    
+    # Compute average iterations INCLUDING penalty (101) for runs that didn't reach threshold
+    avg_iter_with_penalty = np.mean(results['iterations_to_threshold'])
+    std_iter_with_penalty = np.std(results['iterations_to_threshold'])
+    min_iter = np.min(results['iterations_to_threshold'])
+    max_iter = np.max(results['iterations_to_threshold'])
+    
+    print(f"\nIterations to Threshold (ALL runs, penalty=101 for failures):")
+    print(f"  Mean: {avg_iter_with_penalty:.1f} ± {std_iter_with_penalty:.1f}")
+    print(f"  Min:  {min_iter}, Max: {max_iter}")
+    
+    # Stats for successful runs only (for reference)
+    successful_iters = [i for i, reached in zip(results['iterations_to_threshold'], results['threshold_reached']) if reached]
+    if successful_iters:
+        avg_successful = np.mean(successful_iters)
+        std_successful = np.std(successful_iters)
+        print(f"\nIterations to Threshold (successful runs only, for reference):")
+        print(f"  Mean: {avg_successful:.1f} ± {std_successful:.1f}")
+        
+        # Show if threshold was reached during initialization vs optimization
+        reached_in_init = sum(1 for i in successful_iters if i == 0)
+        reached_in_optim = len(successful_iters) - reached_in_init
+        print(f"\n  Reached during initialization (Iter = 0): {reached_in_init}")
+        print(f"  Reached during optimization (Iter > 0): {reached_in_optim}")
+    
+    # Calculate and print average confusion matrix
     avg_cm = np.mean(results['confusion_matrices'], axis=0)
     print(f"\nAverage Confusion Matrix:")
     print(avg_cm)
     
+    # Find best run
     best_run_idx = np.argmax(results['accuracy'])
     best_accuracy = results['accuracy'][best_run_idx]
     print(f"\nBest Run: {best_run_idx + 1} with accuracy {best_accuracy:.4f}")
     
+    # ==================================================================
+    # CREATE PERFORMANCE PLOT
+    # ==================================================================
     output_dir = os.path.dirname(__file__)
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
     
     metrics = ['accuracy', 'precision', 'recall', 'f1_score']
     means = [np.mean(results[m]) for m in metrics]
     stds = [np.std(results[m]) for m in metrics]
     
-    plt.figure(figsize=(10, 6))
-    bars = plt.bar(metrics, means, yerr=stds, capsize=5, 
-                   color=['skyblue', 'orange', 'green', 'red'], alpha=0.7)
-    plt.ylim(0, 1)
-    plt.title('Hybrid ACOR-LM - Diabetes Classification (8 features, 50 runs)')
-    plt.ylabel('Score')
-    plt.grid(True, alpha=0.3)
+    bars = ax.bar(metrics, means, yerr=stds, capsize=5, 
+                  color=['skyblue', 'orange', 'green', 'red'], alpha=0.7)
+    ax.set_ylim(0, 1)
+    ax.set_title('Hybrid ACOR-LM - Diabetes Classification\n(50 runs)')
+    ax.set_ylabel('Score')
+    ax.grid(True, alpha=0.3)
     
     for bar, mean, std in zip(bars, means, stds):
-        plt.text(bar.get_x() + bar.get_width() / 2, mean + std + 0.02, 
-                f'{mean:.3f}±{std:.3f}', ha='center', va='bottom')
+        ax.text(bar.get_x() + bar.get_width() / 2, mean + std + 0.02, 
+                f'{mean:.3f}±{std:.3f}', ha='center', va='bottom', fontsize=9)
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'diabetes_acor_lm_performance.png'), dpi=300, bbox_inches='tight')
     plt.show()
     
     print("\nPerformance plot saved to: diabetes_acor_lm_performance.png")
+    
+    # ==================================================================
+    # SUMMARY FOR COMPARISON WITH BASELINE
+    # ==================================================================
+    print("\n" + "=" * 70)
+    print("SUMMARY FOR COMPARISON WITH BASELINE")
+    print("=" * 70)
+    print(f"Algorithm: Hybrid ACOR-LM")
+    print(f"Loss Threshold (from Baseline): {LOSS_THRESHOLD:.6f}")
+    print(f"Success Rate: {success_rate:.1f}%")
+    print(f"Avg Iterations to Threshold (with penalty): {avg_iter_with_penalty:.1f}")
+    print(f"Avg Total Iterations: {np.mean(results['iterations']):.1f}")
+    print(f"Avg Final Accuracy: {np.mean(results['accuracy']):.4f}")
+    print(f"Avg Final Loss: {np.mean(results['best_losses']):.6f}")

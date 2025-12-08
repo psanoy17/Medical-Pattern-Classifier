@@ -131,13 +131,7 @@ class SOCHA_ACOR:
         n_ants: Number of new solutions generated per iteration (default: 2)
         n_samples: Archive size k (default: 148, matching training samples)
         q: Locality parameter for Gaussian kernel (default: 0.95)
-            - Controls exploration/exploitation balance
-            - Higher q -> more exploration (flatter distribution)
-            - Lower q -> more exploitation (peaked distribution)
         xi: Convergence speed parameter (default: 0.98)
-            - Scales standard deviation for new solution generation
-            - Higher xi -> larger search steps
-            - Lower xi -> finer search steps
         max_iter: Maximum iterations (default: 100)
         patience: Iterations without improvement before stopping (default: 15)
         seed: Random seed for reproducibility
@@ -155,6 +149,9 @@ class SOCHA_ACOR:
         self.patience = patience
         self.seed = seed
         
+        # Loss history for post-hoc threshold analysis
+        self.loss_history = []  # List of (iteration, best_loss_at_that_point)
+        
         if seed > 0:
             np.random.seed(seed)
 
@@ -167,10 +164,12 @@ class SOCHA_ACOR:
             ub: Upper bound for weight initialization
             
         Returns:
-            Tuple of (best_weights, best_loss, iterations_used)
+            Tuple of (best_weights, best_loss, iterations_used, loss_history)
         """
+        # Reset loss history
+        self.loss_history = []
+        
         # Initialize neighbor list array
-        # Each solution has (n_samples - 1) neighbors (all other archive members)
         neighbor_list = np.empty((self.n_samples, self.n_samples - 1), dtype=int)
         
         # Initialize tracking variables
@@ -178,49 +177,49 @@ class SOCHA_ACOR:
         best_loss = np.inf
         best_iteration = 0
         
-        # Initialize solution archive (p_X) and fitness values (p_v)
-        archive_solutions = None  # Will hold (n_samples, dim) array
-        archive_fitness = []  # Will hold fitness values
+        # Initialize solution archive and fitness values
+        archive_solutions = None
+        archive_fitness = []
         
         # ==================================================================
         # PHASE 1: Archive Initialization
-        # Generate n_samples random solutions and evaluate them
         # ==================================================================
         for i in range(self.n_samples):
-            # Generate random solution within bounds
             solution = np.random.uniform(lb, ub, self.dim)
             fitness = self.obj_func(solution)
             
-            # Add to archive
             if archive_solutions is None:
                 archive_solutions = solution.reshape(1, -1)
             else:
                 archive_solutions = np.vstack([archive_solutions, solution.reshape(1, -1)])
             archive_fitness.append(float(fitness))
+            
+            # Track best during initialization
+            if fitness < best_loss:
+                best_loss = float(fitness)
+                best_weights = solution.copy()
 
         archive_fitness = np.array(archive_fitness, dtype=float)
+        
+        # Record initial best loss (iteration 0 = after initialization)
+        self.loss_history.append((0, best_loss))
         
         # Rank solutions (ascending - lower loss is better)
         archive_ranks = self._rank_ascending_with_random_ties(archive_fitness)
         
-        # Initialize neighbor list (all other solutions are neighbors)
+        # Initialize neighbor list
         for i in range(self.n_samples):
             neighbor_list[i] = np.delete(np.arange(self.n_samples), i)
-
-        # Find initial best solution
-        best_idx = int(np.argmin(archive_fitness))
-        best_loss = float(archive_fitness[best_idx])
-        best_weights = archive_solutions[best_idx].copy()
 
         # ==================================================================
         # PHASE 2: Main Optimization Loop
         # ==================================================================
+        iteration = 0
         for iteration in range(self.max_iter):
             
             # Check for archive convergence (all solutions identical)
             if np.sum(np.std(archive_solutions, axis=0)) == 0:
-                print(f"  [Iter {iteration+1}] Archive converged - all solutions identical")
-                return best_weights, best_loss, iteration + 1
+                break
             
             # Generate new solutions using ACOR mechanism
             new_solutions = self._generate_new_solutions(
@@ -230,8 +229,7 @@ class SOCHA_ACOR:
 
             # Check if solution generation failed
             if new_solutions is None or len(new_solutions) == 0:
-                print(f"  [Iter {iteration+1}] Solution generation failed")
-                return best_weights, best_loss, iteration + 1
+                break
 
             # Evaluate new solutions
             new_fitness = self.obj_func(new_solutions)
@@ -258,39 +256,28 @@ class SOCHA_ACOR:
                 best_idx = int(np.argmin(new_fitness))
                 best_weights = new_solutions[best_idx].copy()
                 best_iteration = iteration
+            
+            # Record loss history after each iteration (1-indexed)
+            self.loss_history.append((iteration + 1, best_loss))
 
-            # Patience-based stopping (no improvement for patience iterations)
+            # Patience-based stopping
             if iteration - best_iteration > self.patience:
-                print(f"  [Iter {iteration+1}] Stopping: No improvement for {self.patience} iterations")
-                return best_weights, best_loss, iteration + 1
+                break
 
-        print(f"  [Iter {self.max_iter}] Stopping: Reached maximum iterations")
-        return best_weights, best_loss, self.max_iter
+        return best_weights, best_loss, iteration + 1, self.loss_history
 
     def _rank_ascending_with_random_ties(self, values):
         """
         Rank values in ascending order with random tie-breaking
-        
-        This ensures that solutions with identical fitness get random ranks,
-        maintaining diversity in the selection process.
-        
-        Args:
-            values: Array of fitness values
-            
-        Returns:
-            Array of ranks (1 = best, n = worst)
         """
         n = len(values)
-        # Random permutation for tie-breaking
         permutation = np.random.permutation(n)
         shuffled_values = values[permutation]
         
-        # Sort and assign ranks
         sort_order = np.argsort(shuffled_values, kind='mergesort')
         ranks = np.empty(n, dtype=int)
         ranks[sort_order] = np.arange(1, n + 1)
         
-        # Restore original order
         inverse_permutation = np.empty(n, dtype=int)
         inverse_permutation[permutation] = np.arange(n)
         
@@ -300,135 +287,84 @@ class SOCHA_ACOR:
                                  n_new_solutions, q, k, xi):
         """
         Generate new solutions using SOCHA's ACOR mechanism
-        
-        This is the core of the ACOR algorithm:
-        1. Select a guiding solution using Gaussian kernel PDF
-        2. Apply QR decomposition for orthogonal rotation
-        3. Compute adaptive standard deviation from neighbor distances
-        4. Sample new solution in rotated space
-        5. Transform back to original space
-        
-        Args:
-            archive_solutions: Current solution archive (k x dim)
-            archive_ranks: Ranks of archive solutions
-            neighbor_list: Neighbor indices for each solution
-            n_new_solutions: Number of new solutions to generate
-            q: Locality parameter for Gaussian kernel
-            k: Archive size
-            xi: Convergence speed parameter
-            
-        Returns:
-            Array of new solutions (n_new_solutions x dim)
         """
         num_solutions, num_dimensions = archive_solutions.shape
         new_solutions = np.empty((n_new_solutions, num_dimensions), dtype=float)
 
-        # Compute selection probabilities using Gaussian kernel PDF
-        # Solutions with better rank (lower) have higher probability
         ranks = np.arange(1, num_solutions + 1)
         selection_probs = self._gaussian_kernel_pdf(ranks, mean=1.0, std=q * k)
         selection_probs = selection_probs / selection_probs.sum()
         
-        # Select guiding solutions probabilistically
         selected_indices = np.random.choice(num_solutions, size=n_new_solutions, 
                                             replace=True, p=selection_probs)
 
-        # Generate each new solution
         for solution_idx in range(n_new_solutions):
             guide_idx = selected_indices[solution_idx]
             
-            # Center archive around guiding solution
             centered_archive = archive_solutions - archive_solutions[guide_idx]
             rotated_archive = centered_archive.copy()
             
-            # Get available neighbors for orthogonal basis construction
             available_neighbors = neighbor_list[guide_idx].copy()
             
-            # Build orthogonal rotation matrix using QR decomposition
             basis_vectors = None
             rotation_matrix = np.eye(num_dimensions)
             
             for dim_idx in range(num_dimensions - 1):
                 if available_neighbors.size == 0:
-                    return None  # Not enough neighbors
+                    return None
                 
-                # Get subspace of remaining dimensions
                 subspace = rotated_archive[available_neighbors, dim_idx:]
                 if subspace.shape[0] == 0 or subspace.shape[1] == 0:
                     return None
                 
-                # Compute distances in subspace
                 distances = np.apply_along_axis(self._euclidean_distance, 1, subspace)
                 if np.sum(distances) == 0.0:
-                    return None  # All neighbors at same point
+                    return None
                 
-                # Select neighbor based on distance (farther = more likely)
                 if available_neighbors.size > 1:
-                    distance_probs = np.power(distances, 4.0)  # Emphasize distant neighbors
+                    distance_probs = np.power(distances, 4.0)
                     distance_probs = distance_probs / distance_probs.sum()
                     chosen_neighbor_idx = np.random.choice(len(available_neighbors), p=distance_probs)
                     chosen_neighbor = available_neighbors[chosen_neighbor_idx]
                 else:
                     chosen_neighbor = available_neighbors[0]
                 
-                # Add chosen direction to basis
                 new_basis_vector = centered_archive[chosen_neighbor]
                 if basis_vectors is None:
                     basis_vectors = new_basis_vector[None, :]
                 else:
                     basis_vectors = np.vstack([basis_vectors, new_basis_vector])
                 
-                # Compute orthogonal rotation matrix via QR decomposition
                 Q, _ = np.linalg.qr(basis_vectors.T, mode='complete')
                 rotation_matrix = Q
                 
-                # Ensure proper rotation (det = +1, not reflection)
                 if np.linalg.det(rotation_matrix) < 0:
                     rotation_matrix[:, 0] *= -1
                 
-                # Apply rotation to centered archive
                 rotated_archive = centered_archive @ rotation_matrix
                 
-                # Remove chosen neighbor from available list
                 available_neighbors = available_neighbors[available_neighbors != chosen_neighbor]
 
-            # Compute adaptive standard deviation from neighbor distances in rotated space
             neighbor_indices = neighbor_list[guide_idx]
             adaptive_std = np.array([
                 np.sum(np.abs(rotated_archive[neighbor_indices, d] - rotated_archive[guide_idx, d])) / (k - 1)
                 for d in range(num_dimensions)
             ])
             
-            # Sample new solution in rotated space
             new_solution_rotated = np.random.normal(
                 loc=rotated_archive[guide_idx],
-                scale=adaptive_std * xi,  # Scale by convergence parameter
+                scale=adaptive_std * xi,
                 size=(num_dimensions,)
             )
             
-            # Transform back to original space
             new_solution = (rotation_matrix @ new_solution_rotated) + archive_solutions[guide_idx]
             new_solutions[solution_idx] = new_solution
             
         return new_solutions
 
     def _gaussian_kernel_pdf(self, x, mean, std):
-        """
-        Compute Gaussian probability density function
-        
-        Used for probabilistic selection of guiding solutions.
-        Solutions with rank closer to mean (1 = best) have higher probability.
-        
-        Args:
-            x: Rank values
-            mean: Mean of Gaussian (typically 1.0 for best rank)
-            std: Standard deviation (q * k)
-            
-        Returns:
-            Probability density values
-        """
+        """Compute Gaussian probability density function"""
         if std <= 0:
-            # Degenerate case: return 1 only for mean
             out = np.zeros_like(x, dtype=float)
             out[np.isclose(x, mean)] = 1.0
             return out
@@ -446,181 +382,329 @@ class SOCHA_ACOR:
 def objective_function(weights, model, X_train, y_train):
     """
     Binary Cross-Entropy Loss as fitness function
-    
-    BCE = -mean(y * log(p) + (1-y) * log(1-p))
-    
-    Args:
-        weights: Flat weight vector for FNN
-        model: FNN instance
-        X_train: Training features
-        y_train: Training labels
-        
-    Returns:
-        BCE loss value (lower is better)
     """
     model.set_weights(weights)
     y_pred = model.forward(X_train)
-    eps = 1e-8  # Small constant to prevent log(0)
+    eps = 1e-8
     loss = -np.mean(y_train*np.log(y_pred+eps) + (1-y_train)*np.log(1-y_pred+eps))
     return loss
 
 
 # ==============================================================================
-# 5. EVALUATION FUNCTION
+# 5. HELPER FUNCTIONS
 # ==============================================================================
-def evaluate_baseline_acor(X_train, X_test, y_train, y_test, n_runs=50):
+def find_iteration_to_threshold(loss_history, threshold):
     """
-    Evaluate Baseline SOCHA-ACOR using 50 independent runs
+    Find the iteration when loss first dropped below threshold
+    
+    Args:
+        loss_history: List of (iteration, best_loss) tuples
+        threshold: Target loss threshold
+        
+    Returns:
+        Iteration number when threshold was reached, or 101 as penalty if never reached
+    """
+    for iteration, loss in loss_history:
+        if loss < threshold:
+            return iteration
+    return 101 # Penalty value for runs that never reached threshold
+
+
+def run_single_acor_experiment(X_train, y_train, X_test, y_test, run_seed):
+    """
+    Run a single ACOR experiment and return results including loss history
     
     Args:
         X_train: Training features
-        X_test: Test features
         y_train: Training labels
+        X_test: Test features
         y_test: Test labels
+        run_seed: Random seed for this run
+        
+    Returns:
+        Dictionary with run results including loss_history for post-hoc analysis
+    """
+    input_dim = 9
+    hidden_dim = 6
+    output_dim = 1
+    num_weights = FNN.get_num_weights(input_dim, hidden_dim, output_dim)
+    
+    # Initialize model
+    model = FNN(input_dim, hidden_dim, output_dim)
+    
+    # Create objective function wrapper
+    def obj_func(weights):
+        if weights.ndim == 1:
+            return objective_function(weights, model, X_train, y_train)
+        else:
+            return np.array([objective_function(w, model, X_train, y_train) for w in weights])
+    
+    # Initialize and run SOCHA-ACOR
+    acor = SOCHA_ACOR(
+        obj_func=obj_func,
+        dim=num_weights,
+        n_ants=2,
+        n_samples=148,
+        q=0.95,
+        xi=0.98,
+        max_iter=100,
+        patience=15,
+        seed=run_seed
+    )
+    
+    best_weights, best_loss, iterations, loss_history = acor.optimize(lb=-3, ub=3)
+    
+    # Evaluate on test set
+    model.set_weights(best_weights)
+    y_pred = model.predict(X_test)
+    
+    # Calculate metrics
+    acc = accuracy_score(y_test, y_pred)
+    prec = precision_score(y_test, y_pred, zero_division=0)
+    rec = recall_score(y_test, y_pred, zero_division=0)
+    f1 = f1_score(y_test, y_pred, zero_division=0)
+    cm = confusion_matrix(y_test, y_pred)
+    
+    return {
+        'accuracy': acc,
+        'precision': prec,
+        'recall': rec,
+        'f1_score': f1,
+        'confusion_matrix': cm,
+        'best_loss': best_loss,
+        'iterations': iterations,
+        'loss_history': loss_history,
+        'best_weights': best_weights
+    }
+
+
+# ==============================================================================
+# 6. EVALUATION FUNCTION (Single-Phase with Post-Hoc Analysis)
+# ==============================================================================
+def evaluate_baseline_acor_single_phase(X_train, X_test, y_train, y_test, n_runs=50):
+    """
+    Evaluate Baseline SOCHA-ACOR using Single-Phase approach with post-hoc analysis
+    
+    This approach:
+    1. Runs all experiments ONCE and stores loss history
+    2. Computes threshold from average final loss
+    3. Analyzes stored history to find iterations-to-threshold (NO RE-RUNNING)
+    
+    Args:
+        X_train, X_test, y_train, y_test: Data splits
         n_runs: Number of independent runs
         
     Returns:
-        Dictionary with evaluation results
+        Dictionary with evaluation results including iteration-based convergence metrics
     """
-    results = {
+    print(f"\n{'='*70}")
+    print(f"Running {n_runs} experiments (with loss history tracking)...")
+    print("="*70)
+    
+    # Store all results including loss histories
+    all_results = {
         'accuracy': [],
         'precision': [],
         'recall': [],
         'f1_score': [],
         'confusion_matrices': [],
         'best_losses': [],
-        'iterations': []
+        'iterations': [],
+        'loss_histories': []
     }
     
-    input_dim = 9
-    hidden_dim = 6
-    output_dim = 1
-    num_weights = FNN.get_num_weights(input_dim, hidden_dim, output_dim)
-    
-    print(f"\nRunning {n_runs} independent experiments...")
-    print("=" * 60)
-    
     for run in range(n_runs):
-        print(f"Run {run + 1}/{n_runs}", end=" ")
+        print(f"  Run {run + 1}/{n_runs}", end=" ")
         
-        # Initialize model
-        model = FNN(input_dim, hidden_dim, output_dim)
-        
-        # Create objective function wrapper
-        def obj_func(weights):
-            if weights.ndim == 1:
-                return objective_function(weights, model, X_train, y_train)
-            else:
-                return np.array([objective_function(w, model, X_train, y_train) for w in weights])
-        
-        # Initialize and run SOCHA-ACOR
-        acor = SOCHA_ACOR(
-            obj_func=obj_func,
-            dim=num_weights,
-            n_ants=2,
-            n_samples=148,
-            q=0.95,
-            xi=0.98,
-            max_iter=100,
-            patience=15,
-            seed=42 + run  # Different seed for each run
+        run_result = run_single_acor_experiment(
+            X_train, y_train, X_test, y_test, 
+            run_seed=42 + run
         )
         
-        best_weights, best_loss, iterations = acor.optimize(lb=-3, ub=3)
+        all_results['accuracy'].append(run_result['accuracy'])
+        all_results['precision'].append(run_result['precision'])
+        all_results['recall'].append(run_result['recall'])
+        all_results['f1_score'].append(run_result['f1_score'])
+        all_results['confusion_matrices'].append(run_result['confusion_matrix'])
+        all_results['best_losses'].append(run_result['best_loss'])
+        all_results['iterations'].append(run_result['iterations'])
+        all_results['loss_histories'].append(run_result['loss_history'])
         
-        # Evaluate on test set
-        model.set_weights(best_weights)
-        y_pred = model.predict(X_test)
-        
-        # Calculate metrics
-        acc = accuracy_score(y_test, y_pred)
-        prec = precision_score(y_test, y_pred, zero_division=0)
-        rec = recall_score(y_test, y_pred, zero_division=0)
-        f1 = f1_score(y_test, y_pred, zero_division=0)
-        cm = confusion_matrix(y_test, y_pred)
-        
-        # Store results
-        results['accuracy'].append(acc)
-        results['precision'].append(prec)
-        results['recall'].append(rec)
-        results['f1_score'].append(f1)
-        results['confusion_matrices'].append(cm)
-        results['best_losses'].append(best_loss)
-        results['iterations'].append(iterations)
-        
-        print(f"Acc: {acc:.3f}, Prec: {prec:.3f}, Rec: {rec:.3f}, F1: {f1:.3f}, Loss: {best_loss:.3f}")
+        print(f"Loss: {run_result['best_loss']:.4f}, Acc: {run_result['accuracy']:.3f}, Iter: {run_result['iterations']}")
     
-    return results
+    # ==================================================================
+    # POST-HOC THRESHOLD ANALYSIS (No re-running!)
+    # ==================================================================
+    average_final_loss = np.mean(all_results['best_losses'])
+    loss_std = np.std(all_results['best_losses'])
+    
+    print(f"\n{'='*70}")
+    print("POST-HOC THRESHOLD ANALYSIS")
+    print("="*70)
+    print(f"  Average Final Loss: {average_final_loss:.6f} ± {loss_std:.6f}")
+    print(f"  Min Loss: {np.min(all_results['best_losses']):.6f}")
+    print(f"  Max Loss: {np.max(all_results['best_losses']):.6f}")
+    print(f"  >>> TARGET THRESHOLD SET TO: {average_final_loss:.6f} <<<")
+    print(f"\n  Analyzing stored loss histories (no re-running)...")
+    
+    # Analyze each run's loss history to find iterations-to-threshold
+    iterations_to_threshold_list = []
+    threshold_reached_list = []
+    
+    for run_idx, loss_history in enumerate(all_results['loss_histories']):
+        iter_to_thresh = find_iteration_to_threshold(loss_history, average_final_loss)
+        iterations_to_threshold_list.append(iter_to_thresh)
+        
+        reached = iter_to_thresh < 101  # 101 is the penalty value
+        threshold_reached_list.append(reached)
+        
+        status = f"Iter={iter_to_thresh}" if reached else "NOT REACHED (penalty=101)"
+        print(f"    Run {run_idx + 1}: {status}")
+    
+    # Compile final results - include ALL runs (with penalty) in average
+    successful_iters = [i for i in iterations_to_threshold_list if i < 101]
+    success_count = len(successful_iters)
+    success_rate = success_count / n_runs * 100
+    
+    final_results = {
+        # Core metrics
+        'accuracy': all_results['accuracy'],
+        'precision': all_results['precision'],
+        'recall': all_results['recall'],
+        'f1_score': all_results['f1_score'],
+        'confusion_matrices': all_results['confusion_matrices'],
+        'best_losses': all_results['best_losses'],
+        'iterations': all_results['iterations'],
+        
+        # Iteration-based tracking (ALL runs including penalty)
+        'iterations_to_threshold': iterations_to_threshold_list,
+        'threshold_reached': threshold_reached_list,
+        'loss_histories': all_results['loss_histories'],
+        
+        # Threshold metadata
+        'loss_threshold': average_final_loss,
+        'loss_threshold_std': loss_std,
+        
+        # Success rate analysis
+        'success_count': success_count,
+        'success_rate': success_rate,
+        'successful_iterations': successful_iters,
+    }
+    
+    return final_results
 
 
 # ==============================================================================
-# 6. MAIN EXECUTION
+# 7. MAIN EXECUTION
 # ==============================================================================
 if __name__ == "__main__":
-    print("=" * 60)
+    print("=" * 70)
     print("BASELINE ACOR (SOCHA-ACOR) FOR CANCER CLASSIFICATION")
-    print("=" * 60)
+    print("Single-Phase Evaluation with Post-Hoc Iteration Analysis")
+    print("=" * 70)
     print(f"Architecture: 9 inputs, 6 hidden (ReLU), 1 output (Sigmoid)")
     print(f"Total weights: {FNN.get_num_weights(9, 6, 1)}")
     print(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
     print(f"Evaluation: 50 independent runs")
     print()
     
-    # Run evaluation
-    results = evaluate_baseline_acor(X_train, X_test, y_train, y_test, n_runs=50)
+    # Run single-phase evaluation with post-hoc analysis
+    results = evaluate_baseline_acor_single_phase(X_train, X_test, y_train, y_test, n_runs=50)
     
     # ==================================================================
-    # PRINT FINAL RESULTS (Terminal Only - No File Saving)
+    # PRINT FINAL RESULTS
     # ==================================================================
-    print("\n" + "=" * 60)
-    print("OPTIMIZATION COMPLETE")
-    print("=" * 60)
-    
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
     print("FINAL RESULTS (Averaged across 50 runs)")
-    print("=" * 60)
+    print("=" * 70)
     
+    # Performance metrics
+    print("\n--- Performance Metrics ---")
     for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
         mean_val = np.mean(results[metric])
         std_val = np.std(results[metric])
-        print(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}")
+        print(f"{metric.capitalize():12}: {mean_val:.4f} ± {std_val:.4f}")
     
-    print(f"Best Loss: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}")
-    print(f"Iterations: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}")
+    print(f"\n{'Best Loss':12}: {np.mean(results['best_losses']):.6f} ± {np.std(results['best_losses']):.6f}")
+    print(f"{'Iterations':12}: {np.mean(results['iterations']):.1f} ± {np.std(results['iterations']):.1f}")
     
-    # Calculate and print average confusion matrix
+    # Iteration-based Time-to-Target Analysis
+    print("\n--- Time-to-Target Analysis (Iterations) ---")
+    print(f"Target Threshold (Avg Final Loss): {results['loss_threshold']:.6f}")
+    print(f"Success Rate: {results['success_rate']:.1f}% ({results['success_count']}/50 runs reached threshold)")
+    
+    # Compute average iterations INCLUDING penalty (101) for runs that didn't reach threshold
+    avg_iter_with_penalty = np.mean(results['iterations_to_threshold'])
+    std_iter_with_penalty = np.std(results['iterations_to_threshold'])
+    min_iter = np.min(results['iterations_to_threshold'])
+    max_iter = np.max(results['iterations_to_threshold'])
+    
+    print(f"\nIterations to Threshold (ALL runs, penalty=101 for failures):")
+    print(f"  Mean: {avg_iter_with_penalty:.1f} ± {std_iter_with_penalty:.1f}")
+    print(f"  Min:  {min_iter}, Max: {max_iter}")
+    
+    if results['successful_iterations']:
+        # Also show stats for successful runs only (for reference)
+        avg_successful = np.mean(results['successful_iterations'])
+        std_successful = np.std(results['successful_iterations'])
+        print(f"\nIterations to Threshold (successful runs only, for reference):")
+        print(f"  Mean: {avg_successful:.1f} ± {std_successful:.1f}")
+        
+        # Show if threshold was reached during initialization vs optimization
+        reached_in_init = sum(1 for i in results['successful_iterations'] if i == 0)
+        reached_in_optim = len(results['successful_iterations']) - reached_in_init
+        print(f"\n  Reached during initialization (Iter = 0): {reached_in_init}")
+        print(f"  Reached during optimization (Iter > 0): {reached_in_optim}")
+    
+    # Confusion matrix
     avg_cm = np.mean(results['confusion_matrices'], axis=0)
     print(f"\nAverage Confusion Matrix:")
     print(avg_cm)
     
-    # Find best run
+    # Best run
     best_run_idx = np.argmax(results['accuracy'])
     best_accuracy = results['accuracy'][best_run_idx]
     print(f"\nBest Run: {best_run_idx + 1} with accuracy {best_accuracy:.4f}")
     
     # ==================================================================
-    # CREATE PERFORMANCE PLOT (Optional - Still Saved)
+    # CREATE PERFORMANCE PLOT (Single plot - no pie chart)
     # ==================================================================
     output_dir = os.path.dirname(__file__)
     
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Performance metrics bar chart
     metrics = ['accuracy', 'precision', 'recall', 'f1_score']
     means = [np.mean(results[m]) for m in metrics]
     stds = [np.std(results[m]) for m in metrics]
     
-    plt.figure(figsize=(10, 6))
-    bars = plt.bar(metrics, means, yerr=stds, capsize=5, 
-                   color=['skyblue', 'orange', 'green', 'red'], alpha=0.7)
-    plt.ylim(0, 1)
-    plt.title('Baseline SOCHA-ACOR - Cancer Classification (9 features, 50 runs)')
-    plt.ylabel('Score')
-    plt.grid(True, alpha=0.3)
+    bars = ax.bar(metrics, means, yerr=stds, capsize=5, 
+                  color=['skyblue', 'orange', 'green', 'red'], alpha=0.7)
+    ax.set_ylim(0, 1)
+    ax.set_title('Baseline SOCHA-ACOR - Performance Metrics\n(50 runs)')
+    ax.set_ylabel('Score')
+    ax.grid(True, alpha=0.3)
     
     for bar, mean, std in zip(bars, means, stds):
-        plt.text(bar.get_x() + bar.get_width() / 2, mean + std + 0.02, 
-                f'{mean:.3f}±{std:.3f}', ha='center', va='bottom')
+        ax.text(bar.get_x() + bar.get_width() / 2, mean + std + 0.02, 
+                f'{mean:.3f}±{std:.3f}', ha='center', va='bottom', fontsize=9)
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'cancer_acor_performance.png'), dpi=300, bbox_inches='tight')
     plt.show()
     
     print("\nPerformance plot saved to: cancer_acor_performance.png")
+    
+    # ==================================================================
+    # SUMMARY FOR COMPARISON WITH HYBRID
+    # ==================================================================
+    print("\n" + "=" * 70)
+    print("SUMMARY FOR COMPARISON (Use these values for Hybrid evaluation)")
+    print("=" * 70)
+    print(f"Algorithm: Baseline SOCHA-ACOR")
+    print(f"Loss Threshold (for Hybrid): {results['loss_threshold']:.6f}")
+    print(f"Success Rate: {results['success_rate']:.1f}%")
+    print(f"Avg Iterations to Threshold (with penalty): {avg_iter_with_penalty:.1f}")
+    print(f"Avg Total Iterations: {np.mean(results['iterations']):.1f}")
+    print(f"Avg Final Accuracy: {np.mean(results['accuracy']):.4f}")
+    print(f"Avg Final Loss: {np.mean(results['best_losses']):.6f}")

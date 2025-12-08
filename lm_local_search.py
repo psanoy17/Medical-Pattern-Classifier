@@ -288,7 +288,8 @@ class MultipleColonyACOR:
             )
             self.colonies.append(colony)
     
-    def optimize(self, lb: float, ub: float, model, X_train: np.ndarray, y_train: np.ndarray):
+    def optimize(self, lb: float, ub: float, model, X_train: np.ndarray, y_train: np.ndarray,
+                 loss_threshold: float = None):
         """
         Main optimization loop with multiple colonies and LM local search
         
@@ -298,9 +299,11 @@ class MultipleColonyACOR:
             model: Neural network model
             X_train: Training features
             y_train: Training labels
+            loss_threshold: Optional loss threshold for iteration tracking
             
         Returns:
-            Tuple of (best_weights, best_loss, iterations_used)
+            Tuple of (best_weights, best_loss, iterations_used, iter_to_threshold)
+            If loss_threshold is None, iter_to_threshold will be 101 (penalty value)
         """
         # Initialize all colony archives
         for colony in self.colonies:
@@ -311,6 +314,21 @@ class MultipleColonyACOR:
         best_global_loss = np.inf
         global_stagnation_counter = 0
         best_global_iteration = 0
+        
+        # Threshold tracking
+        iter_to_threshold = 101  # Penalty value if threshold never reached
+        threshold_reached = False
+        
+        # Check if threshold reached during initialization
+        for colony in self.colonies:
+            if colony.best_loss < best_global_loss:
+                best_global_loss = colony.best_loss
+                best_global_weights = colony.best_weights.copy()
+        
+        # Check threshold after initialization (iteration 0)
+        if loss_threshold is not None and best_global_loss < loss_threshold and not threshold_reached:
+            iter_to_threshold = 0
+            threshold_reached = True
         
         # Statistics tracking
         total_lm_applications = 0
@@ -343,6 +361,11 @@ class MultipleColonyACOR:
                     best_global_iteration = iteration
                     global_improved_this_iteration = True
             
+            # Check if threshold reached this iteration
+            if loss_threshold is not None and best_global_loss < loss_threshold and not threshold_reached:
+                iter_to_threshold = iteration + 1  # 1-indexed iteration
+                threshold_reached = True
+            
             # Update global stagnation counter
             if global_improved_this_iteration:
                 global_stagnation_counter = 0
@@ -355,11 +378,99 @@ class MultipleColonyACOR:
             
             # Global stopping criteria (patience-based)
             if global_stagnation_counter > self.patience:
-                print(f"  [Iter {iteration+1}] Stopping: No improvement for {self.patience} iterations")
                 break
 
-        print(f"  [Iter {self.max_iter}] Stopping: Reached maximum iterations")
-        return best_global_weights, best_global_loss, iteration + 1
+        return best_global_weights, best_global_loss, iteration + 1, iter_to_threshold
+
+    def optimize_with_history(self, lb: float, ub: float, model, X_train: np.ndarray, y_train: np.ndarray):
+        """
+        Main optimization loop with loss history tracking for post-hoc threshold analysis.
+        
+        This version returns loss history instead of iter_to_threshold, allowing
+        the threshold to be computed post-hoc (e.g., per-fold in k-fold CV).
+        
+        Args:
+            lb: Lower bound for weight initialization
+            ub: Upper bound for weight initialization
+            model: Neural network model
+            X_train: Training features
+            y_train: Training labels
+            
+        Returns:
+            Tuple of (best_weights, best_loss, iterations_used, loss_history)
+            loss_history is a list of (iteration, best_loss_at_that_point) tuples
+        """
+        # Initialize all colony archives
+        for colony in self.colonies:
+            colony.initialize_archive(lb, ub)
+        
+        # Global tracking variables
+        best_global_weights = None
+        best_global_loss = np.inf
+        global_stagnation_counter = 0
+        best_global_iteration = 0
+        
+        # Loss history for post-hoc analysis
+        loss_history = []
+        
+        # Check best after initialization
+        for colony in self.colonies:
+            if colony.best_loss < best_global_loss:
+                best_global_loss = colony.best_loss
+                best_global_weights = colony.best_weights.copy()
+        
+        # Record initial best loss (iteration 0 = after initialization)
+        loss_history.append((0, best_global_loss))
+        
+        # Statistics tracking
+        total_lm_applications = 0
+        
+        # ==================================================================
+        # Main Optimization Loop
+        # ==================================================================
+        for iteration in range(self.max_iter):
+            global_improved_this_iteration = False
+            
+            # Run each colony for one iteration
+            for colony_idx, colony in enumerate(self.colonies):
+                colony.run_iteration()
+                
+                # Check for local stagnation -> trigger LM
+                if colony.has_local_stagnation():
+                    lm_weights, lm_loss, lm_iters = self.lm_optimizer.optimize(
+                        model, X_train, y_train, colony.best_weights
+                    )
+                    total_lm_applications += 1
+                    
+                    # Inject LM solution if it improved
+                    if lm_loss < colony.best_loss:
+                        colony.inject_lm_solution(lm_weights, lm_loss)
+                
+                # Update global best
+                if colony.best_loss < best_global_loss:
+                    best_global_loss = colony.best_loss
+                    best_global_weights = colony.best_weights.copy()
+                    best_global_iteration = iteration
+                    global_improved_this_iteration = True
+            
+            # Record loss history after each iteration (1-indexed)
+            loss_history.append((iteration + 1, best_global_loss))
+            
+            # Update global stagnation counter
+            if global_improved_this_iteration:
+                global_stagnation_counter = 0
+            else:
+                global_stagnation_counter += 1
+            
+            # Inter-colony solution sharing
+            if (iteration + 1) % self.sharing_frequency == 0:
+                self._share_solutions_between_colonies()
+            
+            # Global stopping criteria (patience-based)
+            if global_stagnation_counter > self.patience:
+                break
+
+        return best_global_weights, best_global_loss, iteration + 1, loss_history
     
     def _share_solutions_between_colonies(self):
         """
