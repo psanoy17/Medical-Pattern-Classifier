@@ -4,82 +4,102 @@ K-Fold Cross-Validation Comparison
 Architecture: 35-6-1 (Total weights: 223)
 Number of folds: 4
 Runs per fold per algorithm: 50
+Loss Threshold: Computed post-hoc per fold from baseline's average final loss
+Penalty for runs not reaching threshold: 101
+
+PER-FOLD LOSS THRESHOLDS
+======================================================================
+  Fold 1: 2.464506
+  Fold 2: 2.425327
+  Fold 3: 2.475479
+  Fold 4: 2.437267
+  Average: 2.450645 ± 0.020179
 
 PER-FOLD RESULTS
 ======================================================================
 
-Fold 1:
+Fold 1 (Threshold: 2.464506):
   Baseline ACOR:
-    Accuracy:   0.6395
-    Precision:  0.6984
-    Recall:     0.6416
-    F1-Score:   0.6573
-    Iterations: 19.5
+    Accuracy:          0.6525
+    Precision:         0.7086
+    Recall:            0.6616
+    F1-Score:          0.6744
+    Convergence Speed: 54.7
+    Loss:              2.464506
   Hybrid ACOR-LM:
-    Accuracy:   0.7804
-    Precision:  0.8061
-    Recall:     0.7978
-    F1-Score:   0.8017
-    Iterations: 22.6
+    Accuracy:          0.7824
+    Precision:         0.8084
+    Recall:            0.7987
+    F1-Score:          0.8033
+    Convergence Speed: 1.0
+    Loss:              0.264339
 
-Fold 2:
+Fold 2 (Threshold: 2.425327):
   Baseline ACOR:
-    Accuracy:   0.6362
-    Precision:  0.6792
-    Recall:     0.6564
-    F1-Score:   0.6561
-    Iterations: 18.6
+    Accuracy:          0.6474
+    Precision:         0.6866
+    Recall:            0.6850
+    F1-Score:          0.6764
+    Convergence Speed: 58.7
+    Loss:              2.425327
   Hybrid ACOR-LM:
-    Accuracy:   0.7869
-    Precision:  0.7928
-    Recall:     0.8315
-    F1-Score:   0.8115
-    Iterations: 23.0
+    Accuracy:          0.7850
+    Precision:         0.7920
+    Recall:            0.8282
+    F1-Score:          0.8095
+    Convergence Speed: 1.0
+    Loss:              0.269196
 
-Fold 3:
+Fold 3 (Threshold: 2.475479):
   Baseline ACOR:
-    Accuracy:   0.6572
-    Precision:  0.6896
-    Recall:     0.7096
-    F1-Score:   0.6931
-    Iterations: 18.6
+    Accuracy:          0.6552
+    Precision:         0.6928
+    Recall:            0.7002
+    F1-Score:          0.6884
+    Convergence Speed: 56.7
+    Loss:              2.475479
   Hybrid ACOR-LM:
-    Accuracy:   0.8090
-    Precision:  0.8179
-    Recall:     0.8420
-    F1-Score:   0.8295
-    Iterations: 22.8
+    Accuracy:          0.8075
+    Precision:         0.8166
+    Recall:            0.8406
+    F1-Score:          0.8282
+    Convergence Speed: 0.6
+    Loss:              0.271353
 
-Fold 4:
+Fold 4 (Threshold: 2.437267):
   Baseline ACOR:
-    Accuracy:   0.6434
-    Precision:  0.6812
-    Recall:     0.6921
-    F1-Score:   0.6775
-    Iterations: 19.3
+    Accuracy:          0.6655
+    Precision:         0.7019
+    Recall:            0.7052
+    F1-Score:          0.6951
+    Convergence Speed: 50.6
+    Loss:              2.437267
   Hybrid ACOR-LM:
-    Accuracy:   0.7904
-    Precision:  0.8081
-    Recall:     0.8140
-    F1-Score:   0.8109
-    Iterations: 22.7
+    Accuracy:          0.7916
+    Precision:         0.8087
+    Recall:            0.8157
+    F1-Score:          0.8120
+    Convergence Speed: 0.7
+    Loss:              0.236153
 
 
 OVERALL RESULTS (Mean ± Std)
 ======================================================================
 
 Baseline ACOR:
-  Accuracy: 0.6441 ± 0.0730
-  Precision: 0.6871 ± 0.0780
-  Recall: 0.6749 ± 0.1407
-  F1_score: 0.6710 ± 0.0900
-  Iterations: 19.0 ± 5.3
-  Loss: 2.385987 ± 0.393483
+  Accuracy: 0.6552 ± 0.0660
+  Precision: 0.6975 ± 0.0713
+  Recall: 0.6880 ± 0.1288
+  F1_score: 0.6836 ± 0.0758
+  Convergence Speed: 55.2 ± 50.2
+  Success Rate: 45.5% (91/200)
+  Loss: 2.450645 ± 0.398214
 
 Hybrid ACOR-LM:
-  Accuracy: 0.7917 ± 0.0243
-  Precision: 0.8062 ± 0.0229
-  Recall: 0.8213 ± 0.0319
-  F1_score: 0.8134 ± 0.0225
-  Iterations: 22.8 ± 2.6
-  Loss: 0.259654 ± 0.021679
+  Accuracy: 0.7916 ± 0.0236
+  Precision: 0.8064 ± 0.0224
+  Recall: 0.8208 ± 0.0315
+  F1_score: 0.8132 ± 0.0220
+  Convergence Speed: 0.8 ± 2.1
+  Success Rate: 100.0% (200/200)
+  Loss: 0.260260 ± 0.022070

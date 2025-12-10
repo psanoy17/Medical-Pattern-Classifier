@@ -246,8 +246,8 @@ class MultipleColonyACOR:
                  n_colonies: int = 3,
                  n_ants: int = 2,
                  n_samples: int = 148,
-                 q: float = 0.95,
-                 xi: float = 0.98,
+                 q: float = 0.01,
+                 xi: float = 0.95,
                  max_iter: int = 100,
                  patience: int = 15,
                  local_patience: int = 5,
@@ -521,17 +521,16 @@ class SingleColonyACOR:
     Key Components:
     1. Solution Archive: Stores k best solutions found so far
     2. Gaussian Kernel PDF: Probabilistic selection based on solution rank
-    3. QR Decomposition: Orthogonal rotation for correlated sampling
-    4. Neighbor List: All other solutions in archive (for distance computation)
-    5. Adaptive Standard Deviation: Computed from neighbor distances
+    3. Independent Gaussian Sampling: Each dimension sampled independently
+    4. Adaptive Standard Deviation: σ_i = ξ * Σ|s_e^i - s_l^i| / (k-1)
     
     Parameters:
         obj_func: Objective function to minimize (BCE loss)
         dim: Dimensionality of search space (number of weights)
         n_ants: Number of new solutions generated per iteration (default: 2)
         n_samples: Archive size k (default: 148)
-        q: Locality parameter for Gaussian kernel (default: 0.95)
-        xi: Convergence speed parameter (default: 0.98)
+        q: Locality parameter for Gaussian kernel (default: 0.01)
+        xi: Convergence speed parameter (default: 0.95)
         max_iter: Maximum iterations (default: 100)
         patience: Local stagnation patience for LM trigger (default: 5)
         seed: Random seed for reproducibility
@@ -597,7 +596,7 @@ class SingleColonyACOR:
         
         This matches the baseline implementation exactly:
         1. Check for archive convergence
-        2. Generate new solutions using ACOR mechanism
+        2. Generate new solutions using standard ACOR mechanism
         3. Evaluate new solutions
         4. Update archive (keep best n_samples)
         5. Track improvements for stagnation detection
@@ -647,108 +646,54 @@ class SingleColonyACOR:
     
     def _generate_new_solutions(self):
         """
-        Generate new solutions using SOCHA's ACOR mechanism
+        Generate new solutions using Standard ACOR (Socha & Dorigo, 2008)
         
-        This is the core of the ACOR algorithm (matching baseline exactly):
-        1. Select a guiding solution using Gaussian kernel PDF
-        2. Apply QR decomposition for orthogonal rotation
-        3. Compute adaptive standard deviation from neighbor distances
-        4. Sample new solution in rotated space
-        5. Transform back to original space
+        This matches the baseline implementation exactly:
+        
+        Algorithm (Section 3.2 of the paper):
+        1. Compute selection probabilities using Gaussian kernel:
+           w_l = (1 / (q*k*sqrt(2π))) * exp(-((l-1)^2) / (2*(q*k)^2))
+           where l is the rank of solution (1 = best)
+        
+        2. Select guide solution l probabilistically based on weights
+        
+        3. For each dimension i, compute adaptive standard deviation:
+           σ_i^l = ξ * Σ_{e=1}^{k} |s_e^i - s_l^i| / (k-1)
+           This is the average distance from guide to all other solutions
+        
+        4. Sample new solution:
+           s_new^i ~ N(s_l^i, σ_i^l)
+           Each dimension is sampled independently
         
         Returns:
             Array of new solutions (n_ants x dim) or None if generation fails
         """
         num_solutions, num_dimensions = self.archive_solutions.shape
         new_solutions = np.empty((self.n_ants, num_dimensions), dtype=float)
-
-        # Compute selection probabilities using Gaussian kernel PDF
-        # Solutions with better rank (lower) have higher probability
-        ranks = np.arange(1, num_solutions + 1)
-        selection_probs = self._gaussian_kernel_pdf(ranks, mean=1.0, std=self.q * self.n_samples)
-        selection_probs = selection_probs / selection_probs.sum()
         
-        # Select guiding solutions probabilistically
-        selected_indices = np.random.choice(num_solutions, size=self.n_ants, 
-                                            replace=True, p=selection_probs)
-
-        # Generate each new solution
-        for solution_idx in range(self.n_ants):
-            guide_idx = selected_indices[solution_idx]
+        # Compute selection probabilities using Gaussian kernel
+        # w_l ∝ exp(-((rank-1)^2) / (2*(q*k)^2))
+        ranks = np.arange(1, num_solutions + 1)
+        weights = self._gaussian_kernel_pdf(ranks, mean=1.0, std=self.q * self.n_samples)
+        weights = weights / weights.sum()
+        
+        for ant_idx in range(self.n_ants):
+            # Select guide solution probabilistically
+            guide_idx = np.random.choice(num_solutions, p=weights)
+            guide_solution = self.archive_solutions[guide_idx]
             
-            # Center archive around guiding solution
-            centered_archive = self.archive_solutions - self.archive_solutions[guide_idx]
-            rotated_archive = centered_archive.copy()
+            # Compute standard deviation for each dimension
+            # σ_i^l = ξ * Σ_{e=1}^{k} |s_e^i - s_l^i| / (k-1)
+            # Note: Sum includes guide (distance = 0), so effectively sums over k-1 non-zero terms
+            sigma = np.zeros(num_dimensions)
+            for d in range(num_dimensions):
+                distances = np.abs(self.archive_solutions[:, d] - guide_solution[d])
+                sigma[d] = self.xi * np.sum(distances) / (self.n_samples - 1)
             
-            # Get available neighbors for orthogonal basis construction
-            available_neighbors = self.neighbor_list[guide_idx].copy()
-            
-            # Build orthogonal rotation matrix using QR decomposition
-            basis_vectors = None
-            rotation_matrix = np.eye(num_dimensions)
-            
-            for dim_idx in range(num_dimensions - 1):
-                if available_neighbors.size == 0:
-                    return None  # Not enough neighbors
-                
-                # Get subspace of remaining dimensions
-                subspace = rotated_archive[available_neighbors, dim_idx:]
-                if subspace.shape[0] == 0 or subspace.shape[1] == 0:
-                    return None
-                
-                # Compute distances in subspace
-                distances = np.apply_along_axis(self._euclidean_distance, 1, subspace)
-                if np.sum(distances) == 0.0:
-                    return None  # All neighbors at same point
-                
-                # Select neighbor based on distance (farther = more likely)
-                if available_neighbors.size > 1:
-                    distance_probs = np.power(distances, 4.0)  # Emphasize distant neighbors
-                    distance_probs = distance_probs / distance_probs.sum()
-                    chosen_neighbor_idx = np.random.choice(len(available_neighbors), p=distance_probs)
-                    chosen_neighbor = available_neighbors[chosen_neighbor_idx]
-                else:
-                    chosen_neighbor = available_neighbors[0]
-                
-                # Add chosen direction to basis
-                new_basis_vector = centered_archive[chosen_neighbor]
-                if basis_vectors is None:
-                    basis_vectors = new_basis_vector[None, :]
-                else:
-                    basis_vectors = np.vstack([basis_vectors, new_basis_vector])
-                
-                # Compute orthogonal rotation matrix via QR decomposition
-                Q, _ = np.linalg.qr(basis_vectors.T, mode='complete')
-                rotation_matrix = Q
-                
-                # Ensure proper rotation (det = +1, not reflection)
-                if np.linalg.det(rotation_matrix) < 0:
-                    rotation_matrix[:, 0] *= -1
-                
-                # Apply rotation to centered archive
-                rotated_archive = centered_archive @ rotation_matrix
-                
-                # Remove chosen neighbor from available list
-                available_neighbors = available_neighbors[available_neighbors != chosen_neighbor]
-
-            # Compute adaptive standard deviation from neighbor distances in rotated space
-            neighbor_indices = self.neighbor_list[guide_idx]
-            adaptive_std = np.array([
-                np.sum(np.abs(rotated_archive[neighbor_indices, d] - rotated_archive[guide_idx, d])) / (self.n_samples - 1)
-                for d in range(num_dimensions)
-            ])
-            
-            # Sample new solution in rotated space
-            new_solution_rotated = np.random.normal(
-                loc=rotated_archive[guide_idx],
-                scale=adaptive_std * self.xi,  # Scale by convergence parameter
-                size=(num_dimensions,)
-            )
-            
-            # Transform back to original space
-            new_solution = (rotation_matrix @ new_solution_rotated) + self.archive_solutions[guide_idx]
-            new_solutions[solution_idx] = new_solution
-            
+            # Sample new solution from independent Gaussians
+            # s_new^i ~ N(s_l^i, σ_i^l)
+            new_solutions[ant_idx] = np.random.normal(loc=guide_solution, scale=sigma)
+        
         return new_solutions
     
     def _update_neighbor_list(self):
@@ -794,16 +739,20 @@ class SingleColonyACOR:
         """
         Compute Gaussian probability density function
         
-        Used for probabilistic selection of guiding solutions.
-        Solutions with rank closer to mean (1 = best) have higher probability.
+        Used to weight solutions by rank for probabilistic selection.
+        Formula: p(x) = (1 / (σ√(2π))) * exp(-(x-μ)² / (2σ²))
+        
+        For ACOR: μ=1 (best rank), σ=q*k
+        - Smaller q → sharper distribution → stronger preference for best
+        - Larger q → flatter distribution → more uniform selection
         
         Args:
-            x: Rank values
-            mean: Mean of Gaussian (typically 1.0 for best rank)
+            x: Rank values (1 = best, k = worst)
+            mean: Mean of Gaussian (1.0 for best rank)
             std: Standard deviation (q * k)
             
         Returns:
-            Probability density values
+            Unnormalized probability density values
         """
         if std <= 0:
             # Degenerate case: return 1 only for mean
@@ -812,10 +761,6 @@ class SingleColonyACOR:
             return out
         z = (x - mean) / std
         return np.exp(-0.5 * z * z) / (std * np.sqrt(2.0 * np.pi))
-    
-    def _euclidean_distance(self, vector):
-        """Compute Euclidean norm of a vector"""
-        return float(np.sqrt(np.sum(np.square(vector))))
     
     def has_local_stagnation(self) -> bool:
         """

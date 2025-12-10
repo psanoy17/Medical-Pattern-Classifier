@@ -4,10 +4,14 @@ Baseline ACOR (SOCHA-ACOR) for Heart Disease Classification
 This implementation follows SOCHA's original ACOR algorithm:
 - Ant Colony Optimization for Continuous Domains (ACOR)
 - Uses Gaussian kernel PDF for probabilistic solution selection
-- QR decomposition for orthogonal rotation transformation
-- Neighbor list-based exploration with distance weighting
+- Independent Gaussian sampling per dimension (standard ACOR)
+- Adaptive standard deviation computed from archive distances
 
-Reference: Socha, K., & Dorigo, M. (2008). Ant colony optimization for continuous domains.
+References:
+- Socha, K., & Dorigo, M. (2008). Ant colony optimization for continuous domains.
+  European Journal of Operational Research, 185(3), 1155-1173.
+- Socha, K. (2008). Ant Colony Optimization for Continuous and Mixed-Variable Domains.
+  PhD Thesis, Université Libre de Bruxelles.
 
 Architecture: 35 inputs, 6 hidden (ReLU), 1 output (Sigmoid)
 Total weights: 35*6 + 6 + 6*1 + 1 = 223 weights
@@ -121,23 +125,22 @@ class SOCHA_ACOR:
     Key Components:
     1. Solution Archive: Stores k best solutions found so far
     2. Gaussian Kernel PDF: Probabilistic selection based on solution rank
-    3. QR Decomposition: Orthogonal rotation for correlated sampling
-    4. Neighbor List: All other solutions in archive (for distance computation)
-    5. Adaptive Standard Deviation: Computed from neighbor distances
+    3. Independent Gaussian Sampling: Each dimension sampled independently
+    4. Adaptive Standard Deviation: σ_i = ξ * Σ|s_e^i - s_l^i| / (k-1)
     
     Parameters:
         obj_func: Objective function to minimize (BCE loss)
         dim: Dimensionality of search space (number of weights)
-        n_ants: Number of new solutions generated per iteration (default: 2)
-        n_samples: Archive size k (default: 230, based on 80% of 288 samples)
-        q: Locality parameter for Gaussian kernel (default: 0.6)
-        xi: Convergence speed parameter (default: 0.9)
-        max_iter: Maximum iterations (default: 100)
-        patience: Iterations without improvement before stopping (default: 15)
+        n_ants: Number of new solutions generated per iteration (m in thesis)
+        n_samples: Archive size k
+        q: Locality parameter for Gaussian kernel (controls selection pressure)
+        xi: Convergence speed parameter (ξ in thesis)
+        max_iter: Maximum iterations
+        patience: Iterations without improvement before stopping
         seed: Random seed for reproducibility
     """
     
-    def __init__(self, obj_func, dim, n_ants=2, n_samples=230, q=0.6, xi=0.9, 
+    def __init__(self, obj_func, dim, n_ants=2, n_samples=230, q=0.01, xi=0.95, 
                  max_iter=100, patience=15, seed=42):
         self.obj_func = obj_func
         self.dim = dim
@@ -223,7 +226,7 @@ class SOCHA_ACOR:
             
             # Generate new solutions using ACOR mechanism
             new_solutions = self._generate_new_solutions(
-                archive_solutions, archive_ranks, neighbor_list,
+                archive_solutions, archive_ranks,
                 self.n_ants, self.q, self.n_samples, self.xi
             )
 
@@ -267,7 +270,9 @@ class SOCHA_ACOR:
         return best_weights, best_loss, iteration + 1, self.loss_history
 
     def _rank_ascending_with_random_ties(self, values):
-        """Rank values in ascending order with random tie-breaking"""
+        """
+        Rank values in ascending order with random tie-breaking
+        """
         n = len(values)
         permutation = np.random.permutation(n)
         shuffled_values = values[permutation]
@@ -281,95 +286,90 @@ class SOCHA_ACOR:
         
         return ranks[inverse_permutation]
 
-    def _generate_new_solutions(self, archive_solutions, archive_ranks, neighbor_list,
-                                 n_new_solutions, q, k, xi):
-        """Generate new solutions using SOCHA's ACOR mechanism"""
+    def _generate_new_solutions(self, archive_solutions, archive_ranks, 
+                                      n_new_solutions, q, k, xi):
+        """
+        Generate new solutions using Standard ACOR (Socha & Dorigo, 2008)
+        
+        Algorithm (Section 3.2 of the paper):
+        1. Compute selection probabilities using Gaussian kernel:
+           w_l = (1 / (q*k*sqrt(2π))) * exp(-((l-1)^2) / (2*(q*k)^2))
+           where l is the rank of solution (1 = best)
+        
+        2. Select guide solution l probabilistically based on weights
+        
+        3. For each dimension i, compute adaptive standard deviation:
+           σ_i^l = ξ * Σ_{e=1}^{k} |s_e^i - s_l^i| / (k-1)
+           This is the average distance from guide to all other solutions
+        
+        4. Sample new solution:
+           s_new^i ~ N(s_l^i, σ_i^l)
+           Each dimension is sampled independently
+        
+        Args:
+            archive_solutions: Current archive (k x dim)
+            archive_ranks: Ranks of archive solutions (1 = best)
+            n_new_solutions: Number of new solutions to generate (m)
+            q: Locality parameter for selection
+            k: Archive size
+            xi: Convergence speed parameter (ξ)
+            
+        Returns:
+            Array of new solutions (n_new_solutions x dim)
+        """
         num_solutions, num_dimensions = archive_solutions.shape
         new_solutions = np.empty((n_new_solutions, num_dimensions), dtype=float)
-
-        ranks = np.arange(1, num_solutions + 1)
-        selection_probs = self._gaussian_kernel_pdf(ranks, mean=1.0, std=q * k)
-        selection_probs = selection_probs / selection_probs.sum()
         
-        selected_indices = np.random.choice(num_solutions, size=n_new_solutions, 
-                                            replace=True, p=selection_probs)
-
-        for solution_idx in range(n_new_solutions):
-            guide_idx = selected_indices[solution_idx]
+        # Compute selection probabilities using Gaussian kernel
+        # w_l ∝ exp(-((rank-1)^2) / (2*(q*k)^2))
+        ranks = np.arange(1, num_solutions + 1)
+        weights = self._gaussian_kernel_pdf(ranks, mean=1.0, std=q * k)
+        weights = weights / weights.sum()
+        
+        for ant_idx in range(n_new_solutions):
+            # Select guide solution probabilistically
+            guide_idx = np.random.choice(num_solutions, p=weights)
+            guide_solution = archive_solutions[guide_idx]
             
-            centered_archive = archive_solutions - archive_solutions[guide_idx]
-            rotated_archive = centered_archive.copy()
+            # Compute standard deviation for each dimension
+            # σ_i^l = ξ * Σ_{e=1}^{k} |s_e^i - s_l^i| / (k-1)
+            # Note: Sum includes guide (distance = 0), so effectively sums over k-1 non-zero terms
+            sigma = np.zeros(num_dimensions)
+            for d in range(num_dimensions):
+                distances = np.abs(archive_solutions[:, d] - guide_solution[d])
+                sigma[d] = xi * np.sum(distances) / (k - 1)
             
-            available_neighbors = neighbor_list[guide_idx].copy()
-            
-            basis_vectors = None
-            rotation_matrix = np.eye(num_dimensions)
-            
-            for dim_idx in range(num_dimensions - 1):
-                if available_neighbors.size == 0:
-                    return None
-                
-                subspace = rotated_archive[available_neighbors, dim_idx:]
-                if subspace.shape[0] == 0 or subspace.shape[1] == 0:
-                    return None
-                
-                distances = np.apply_along_axis(self._euclidean_distance, 1, subspace)
-                if np.sum(distances) == 0.0:
-                    return None
-                
-                if available_neighbors.size > 1:
-                    distance_probs = np.power(distances, 4.0)
-                    distance_probs = distance_probs / distance_probs.sum()
-                    chosen_neighbor_idx = np.random.choice(len(available_neighbors), p=distance_probs)
-                    chosen_neighbor = available_neighbors[chosen_neighbor_idx]
-                else:
-                    chosen_neighbor = available_neighbors[0]
-                
-                new_basis_vector = centered_archive[chosen_neighbor]
-                if basis_vectors is None:
-                    basis_vectors = new_basis_vector[None, :]
-                else:
-                    basis_vectors = np.vstack([basis_vectors, new_basis_vector])
-                
-                Q, _ = np.linalg.qr(basis_vectors.T, mode='complete')
-                rotation_matrix = Q
-                
-                if np.linalg.det(rotation_matrix) < 0:
-                    rotation_matrix[:, 0] *= -1
-                
-                rotated_archive = centered_archive @ rotation_matrix
-                
-                available_neighbors = available_neighbors[available_neighbors != chosen_neighbor]
-
-            neighbor_indices = neighbor_list[guide_idx]
-            adaptive_std = np.array([
-                np.sum(np.abs(rotated_archive[neighbor_indices, d] - rotated_archive[guide_idx, d])) / (k - 1)
-                for d in range(num_dimensions)
-            ])
-            
-            new_solution_rotated = np.random.normal(
-                loc=rotated_archive[guide_idx],
-                scale=adaptive_std * xi,
-                size=(num_dimensions,)
-            )
-            
-            new_solution = (rotation_matrix @ new_solution_rotated) + archive_solutions[guide_idx]
-            new_solutions[solution_idx] = new_solution
-            
+            # Sample new solution from independent Gaussians
+            # s_new^i ~ N(s_l^i, σ_i^l)
+            new_solutions[ant_idx] = np.random.normal(loc=guide_solution, scale=sigma)
+        
         return new_solutions
 
     def _gaussian_kernel_pdf(self, x, mean, std):
-        """Compute Gaussian probability density function"""
+        """
+        Compute Gaussian probability density function
+        
+        Used to weight solutions by rank for probabilistic selection.
+        Formula: p(x) = (1 / (σ√(2π))) * exp(-(x-μ)² / (2σ²))
+        
+        For ACOR: μ=1 (best rank), σ=q*k
+        - Smaller q → sharper distribution → stronger preference for best
+        - Larger q → flatter distribution → more uniform selection
+        
+        Args:
+            x: Rank values (1 = best, k = worst)
+            mean: Mean of Gaussian (1.0 for best rank)
+            std: Standard deviation (q * k)
+            
+        Returns:
+            Unnormalized probability density values
+        """
         if std <= 0:
             out = np.zeros_like(x, dtype=float)
             out[np.isclose(x, mean)] = 1.0
             return out
         z = (x - mean) / std
         return np.exp(-0.5 * z * z) / (std * np.sqrt(2.0 * np.pi))
-
-    def _euclidean_distance(self, vector):
-        """Compute Euclidean norm of a vector"""
-        return float(np.sqrt(np.sum(np.square(vector))))
 
 
 # ==============================================================================
@@ -439,8 +439,8 @@ def run_single_acor_experiment(X_train, y_train, X_test, y_test, run_seed):
         dim=num_weights,
         n_ants=2,
         n_samples=230,
-        q=0.6,
-        xi=0.9,
+        q=0.01,
+        xi=0.95,
         max_iter=100,
         patience=15,
         seed=run_seed
