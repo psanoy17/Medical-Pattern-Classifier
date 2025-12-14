@@ -1,0 +1,31 @@
+Loaded dataset: 920 samples, 35 features
+Target distribution: Class 0: 411, Class 1: 509
+Training set: 736 samples
+Test set: 184 samples
+Hybrid Profile (Sequential): 10 random configurations
+Grid size: 4096 | CV: 2-fold | Runs/fold: 2
+
+[1/10] Config done in 12.2s: n_colonies=2, local_patience=5
+  -> mean_acc=0.7685, mean_loss=0.198912
+[2/10] Config done in 13.0s: n_colonies=2, local_patience=3
+  -> mean_acc=0.7788, mean_loss=0.232221
+[3/10] Config done in 27.5s: n_colonies=4, local_patience=3
+  -> mean_acc=0.7891, mean_loss=0.193778
+[4/10] Config done in 21.2s: n_colonies=3, local_patience=5
+  -> mean_acc=0.7620, mean_loss=0.174176
+[5/10] Config done in 16.0s: n_colonies=3, local_patience=7
+  -> mean_acc=0.7685, mean_loss=0.192566
+[6/10] Config done in 17.0s: n_colonies=3, local_patience=10
+  -> mean_acc=0.7625, mean_loss=0.200746
+[7/10] Config done in 16.8s: n_colonies=2, local_patience=3
+  -> mean_acc=0.7549, mean_loss=0.194453
+[8/10] Config done in 14.2s: n_colonies=2, local_patience=3
+  -> mean_acc=0.7549, mean_loss=0.194453
+[9/10] Config done in 36.7s: n_colonies=5, local_patience=3
+  -> mean_acc=0.7946, mean_loss=0.213084
+[10/10] Config done in 14.3s: n_colonies=2, local_patience=3
+  -> mean_acc=0.7549, mean_loss=0.194453
+
+======================================================================
+Profile complete in 188.9s
+Results: C:\Users\Bryan\Desktop\THESIS-MODEL\Medical-Pattern-Classifier\scripts\f_race_hybrid_sequential_results.csv

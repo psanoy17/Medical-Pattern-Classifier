@@ -237,6 +237,8 @@ class MultipleColonyACOR:
         local_patience: Local stagnation patience for LM trigger (default: 5)
         sharing_frequency: Iterations between inter-colony sharing (default: 10)
         sharing_ratio: Fraction of solutions to share (default: 0.1)
+        initial_mu: Initial damping factor for LM (default: 0.001)
+        lm_max_iterations: Maximum LM iterations per application (default: 50)
         seed: Random seed for reproducibility
     """
     
@@ -253,6 +255,8 @@ class MultipleColonyACOR:
                  local_patience: int = 5,
                  sharing_frequency: int = 10,
                  sharing_ratio: float = 0.1,
+                 initial_mu: float = 0.001,
+                 lm_max_iterations: int = 50,
                  seed: int = 42):
         """Initialize Multiple Colony ACOR with LM local search"""
         self.obj_func = obj_func
@@ -269,8 +273,11 @@ class MultipleColonyACOR:
         self.sharing_ratio = sharing_ratio
         self.seed = seed
         
-        # Initialize LM optimizer
-        self.lm_optimizer = LevenbergMarquardt()
+        # Initialize LM optimizer with tunable parameters
+        self.lm_optimizer = LevenbergMarquardt(
+            initial_mu=initial_mu,
+            max_iterations=lm_max_iterations
+        )
         
         # Initialize colonies
         self.colonies = []

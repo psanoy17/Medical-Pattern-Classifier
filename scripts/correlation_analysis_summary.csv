@@ -1,0 +1,4 @@
+Dataset,Samples,Features,NN_Accuracy,GNB_Accuracy,NN_Top_Feature,NN_Top_Corr,GNB_Top_Feature,GNB_Top_Corr
+Heart,920,35,0.5543,0.6522,Fasting_BS,0.582,Resting_BP_Padding,0.439
+Diabetes,768,8,0.6494,0.7662,BMI,0.691,Glucose,0.724
+Cancer,699,9,0.6571,0.9643,Perimeter,0.898,Compactness,0.863

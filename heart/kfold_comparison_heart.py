@@ -241,9 +241,11 @@ def evaluate_hybrid_acor_lm_with_history(X_train, X_test, y_train, y_test, n_run
             xi=0.95,
             max_iter=100,
             patience=15,
-            local_patience=5,
+            local_patience=15,  # HIGH: minimize LM invocations for speed
             sharing_frequency=10,
             sharing_ratio=0.1,
+            initial_mu=0.001,  # Default for LM
+            lm_max_iterations=10,  # Low iterations to minimize computation
             seed=42 + run
         )
         

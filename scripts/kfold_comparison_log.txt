@@ -1,0 +1,140 @@
+Loaded dataset: 920 samples, 35 features
+Target distribution: Class 0: 411, Class 1: 509
+Training set: 736 samples
+Test set: 184 samples
+Heart Disease Classification - K-Fold Cross-Validation Comparison
+Baseline ACOR vs Hybrid ACOR-LM
+======================================================================
+Dataset: 920 samples, 35 features
+Target distribution: Class 0: 411, Class 1: 509
+Architecture: 35 inputs, 6 hidden (ReLU), 1 output (Sigmoid)
+Total weights: 223
+Loss Threshold: Computed post-hoc per fold from baseline's average final loss
+Penalty for runs not reaching threshold: 101
+
+Performing 4-fold cross-validation...
+Runs per fold per algorithm: 50
+Loss Threshold: Computed post-hoc per fold from baseline's average final loss
+======================================================================
+
+======================================================================
+FOLD 1/4
+======================================================================
+Training samples: 690, Test samples: 230
+
+[Baseline ACOR] Running 50 experiments...
+
+  >>> Fold 1 Loss Threshold (from baseline avg): 2.464506 ± 0.371198
+
+[Hybrid ACOR-LM] Running 50 experiments...
+
+Fold 1 Summary (Threshold: 2.464506):
+  Baseline:  Acc=0.6525, F1=0.6744, ConvSpeed=54.7, SuccessRate=46.0%
+  Hybrid:    Acc=0.7932, F1=0.8133, ConvSpeed=2.6, SuccessRate=100.0%
+
+======================================================================
+FOLD 2/4
+======================================================================
+Training samples: 690, Test samples: 230
+
+[Baseline ACOR] Running 50 experiments...
+
+  >>> Fold 2 Loss Threshold (from baseline avg): 2.425327 ± 0.403732
+
+[Hybrid ACOR-LM] Running 50 experiments...
+
+Fold 2 Summary (Threshold: 2.425327):
+  Baseline:  Acc=0.6474, F1=0.6764, ConvSpeed=58.7, SuccessRate=42.0%
+  Hybrid:    Acc=0.7888, F1=0.8145, ConvSpeed=2.6, SuccessRate=100.0%
+
+======================================================================
+FOLD 3/4
+======================================================================
+Training samples: 690, Test samples: 230
+
+[Baseline ACOR] Running 50 experiments...
+
+  >>> Fold 3 Loss Threshold (from baseline avg): 2.475479 ± 0.412745
+
+[Hybrid ACOR-LM] Running 50 experiments...
+
+Fold 3 Summary (Threshold: 2.475479):
+  Baseline:  Acc=0.6552, F1=0.6884, ConvSpeed=56.7, SuccessRate=44.0%
+  Hybrid:    Acc=0.8182, F1=0.8386, ConvSpeed=1.6, SuccessRate=100.0%
+
+======================================================================
+FOLD 4/4
+======================================================================
+Training samples: 690, Test samples: 230
+
+[Baseline ACOR] Running 50 experiments...
+
+  >>> Fold 4 Loss Threshold (from baseline avg): 2.437267 ± 0.401901
+
+[Hybrid ACOR-LM] Running 50 experiments...
+
+Fold 4 Summary (Threshold: 2.437267):
+  Baseline:  Acc=0.6655, F1=0.6951, ConvSpeed=50.6, SuccessRate=50.0%
+  Hybrid:    Acc=0.7976, F1=0.8180, ConvSpeed=1.9, SuccessRate=100.0%
+
+======================================================================
+CROSS-VALIDATION RESULTS - PER-FOLD AVERAGES
+======================================================================
+Loss Threshold: Computed post-hoc per fold from baseline's average final loss
+Penalty for runs not reaching threshold: 101
+
+--- Per-Fold Loss Thresholds ---
+  Fold 1: 2.464506
+  Fold 2: 2.425327
+  Fold 3: 2.475479
+  Fold 4: 2.437267
+  Average: 2.450645 ± 0.020179
+
+--- Per-Fold Results ---
+
+Fold 1 (Threshold: 2.464506):
+  Baseline ACOR  : Acc=0.6525, Prec=0.7086, Rec=0.6616, F1=0.6744, ConvSpeed=54.7
+  Hybrid ACOR-LM : Acc=0.7932, Prec=0.8174, Rec=0.8097, F1=0.8133, ConvSpeed=2.6
+
+Fold 2 (Threshold: 2.425327):
+  Baseline ACOR  : Acc=0.6474, Prec=0.6866, Rec=0.6850, F1=0.6764, ConvSpeed=58.7
+  Hybrid ACOR-LM : Acc=0.7888, Prec=0.7908, Rec=0.8402, F1=0.8145, ConvSpeed=2.6
+
+Fold 3 (Threshold: 2.475479):
+  Baseline ACOR  : Acc=0.6552, Prec=0.6928, Rec=0.7002, F1=0.6884, ConvSpeed=56.7
+  Hybrid ACOR-LM : Acc=0.8182, Prec=0.8223, Rec=0.8559, F1=0.8386, ConvSpeed=1.6
+
+Fold 4 (Threshold: 2.437267):
+  Baseline ACOR  : Acc=0.6655, Prec=0.7019, Rec=0.7052, F1=0.6951, ConvSpeed=50.6
+  Hybrid ACOR-LM : Acc=0.7976, Prec=0.8123, Rec=0.8241, F1=0.8180, ConvSpeed=1.9
+
+======================================================================
+OVERALL RESULTS (Mean ± Std across all folds and runs)
+======================================================================
+
+Baseline ACOR:
+------------------------------------------------------------
+  Accuracy          : 0.6552 ± 0.0660
+  Precision         : 0.6975 ± 0.0713
+  Recall            : 0.6880 ± 0.1288
+  F1_score          : 0.6836 ± 0.0758
+  Convergence Speed : 55.2 ± 50.2 (with penalty=101)
+  Success Rate      : 45.5% (91/200 reached threshold)
+  Loss              : 2.450645 ± 0.398214
+
+Hybrid ACOR-LM:
+------------------------------------------------------------
+  Accuracy          : 0.7994 ± 0.0223
+  Precision         : 0.8107 ± 0.0223
+  Recall            : 0.8325 ± 0.0306
+  F1_score          : 0.8211 ± 0.0205
+  Convergence Speed : 2.2 ± 5.5 (with penalty=101)
+  Success Rate      : 100.0% (200/200 reached threshold)
+  Loss              : 0.281428 ± 0.028221
+
+Results saved to: C:\Users\Bryan\Desktop\THESIS-MODEL\Medical-Pattern-Classifier\heart\heart_kfold_comparison_results.txt
+All individual runs saved to CSV: C:\Users\Bryan\Desktop\THESIS-MODEL\Medical-Pattern-Classifier\heart\heart_kfold_all_runs.csv
+Total runs: 400 (4 folds × 50 runs × 2 algorithms)
+Note: convergence_speed = iterations to reach fold-specific threshold (101 = penalty)
+      fold_threshold = loss threshold used for that fold (from baseline avg)
+Plot saved to: C:\Users\Bryan\Desktop\THESIS-MODEL\Medical-Pattern-Classifier\heart\heart_kfold_comparison.png

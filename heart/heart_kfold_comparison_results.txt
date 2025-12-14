@@ -43,12 +43,12 @@ Fold 2 (Threshold: 2.425327):
     Convergence Speed: 58.7
     Loss:              2.425327
   Hybrid ACOR-LM:
-    Accuracy:          0.7850
-    Precision:         0.7920
-    Recall:            0.8282
-    F1-Score:          0.8095
+    Accuracy:          0.7862
+    Precision:         0.7929
+    Recall:            0.8296
+    F1-Score:          0.8106
     Convergence Speed: 1.0
-    Loss:              0.269196
+    Loss:              0.269234
 
 Fold 3 (Threshold: 2.475479):
   Baseline ACOR:
@@ -59,12 +59,12 @@ Fold 3 (Threshold: 2.475479):
     Convergence Speed: 56.7
     Loss:              2.475479
   Hybrid ACOR-LM:
-    Accuracy:          0.8075
-    Precision:         0.8166
-    Recall:            0.8406
-    F1-Score:          0.8282
+    Accuracy:          0.8065
+    Precision:         0.8159
+    Recall:            0.8395
+    F1-Score:          0.8273
     Convergence Speed: 0.6
-    Loss:              0.271353
+    Loss:              0.271172
 
 Fold 4 (Threshold: 2.437267):
   Baseline ACOR:
@@ -96,10 +96,10 @@ Baseline ACOR:
   Loss: 2.450645 ± 0.398214
 
 Hybrid ACOR-LM:
-  Accuracy: 0.7916 ± 0.0236
-  Precision: 0.8064 ± 0.0224
-  Recall: 0.8208 ± 0.0315
-  F1_score: 0.8132 ± 0.0220
+  Accuracy: 0.7917 ± 0.0232
+  Precision: 0.8065 ± 0.0222
+  Recall: 0.8209 ± 0.0310
+  F1_score: 0.8133 ± 0.0215
   Convergence Speed: 0.8 ± 2.1
   Success Rate: 100.0% (200/200)
-  Loss: 0.260260 ± 0.022070
+  Loss: 0.260224 ± 0.022059
