@@ -241,9 +241,9 @@ def evaluate_hybrid_acor_lm_with_history(X_train, X_test, y_train, y_test, n_run
             xi=0.95,
             max_iter=100,
             patience=15,
-            local_patience=5,
+            local_patience=3,
             sharing_frequency=10,
-            sharing_ratio=0.1,
+            sharing_ratio=0.15,
             seed=42 + run
         )
         

@@ -234,16 +234,16 @@ def evaluate_hybrid_acor_lm_with_history(X_train, X_test, y_train, y_test, n_run
         acor_lm = MultipleColonyACOR(
             obj_func=obj_func,
             dim=num_weights,
-            n_colonies=3,
+            n_colonies=4,
             n_ants=2,
             n_samples=230,
             q=0.01,
             xi=0.95,
             max_iter=100,
             patience=15,
-            local_patience=5,
-            sharing_frequency=10,
-            sharing_ratio=0.1,
+            local_patience=10,
+            sharing_frequency=20,
+            sharing_ratio=0.05,
             seed=42 + run
         )
         
